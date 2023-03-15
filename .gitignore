@@ -8,6 +8,9 @@ check-data-versus-expected-design.html
 ignore -*
 ignore-*
 
+# powerpoint files
+.pptx
+
 # History files
 .Rhistory
 .Rapp.history

@@ -12,3 +12,4 @@ This repository contains code and accompanying documentation focused on curation
 
 _Keywords: Intensive Longitudinal Data, Mobile Health (mHealth)_
 
+[data curation pipeline visual](OT_data_pipeline_viz.pdf)

@@ -29,17 +29,16 @@ dat_master_mda <- readRDS(file.path(path_ontrack_visit_outputs, "enrolled_mda.RD
          v4_attend = event_v4_EventStatus) %>% 
   mutate(participant_id_2 = case_when(
     ID_MDA == '530079' ~ 'ses_119',
+    ID_MDA == "530351" ~ "ses_248",
     T ~ NA_character_
   ), .after = participant_id) %>% 
+  filter(!(ID_MDA == "530351" & participant_id == "ses_248")) %>% 
   mutate(ID_RSR = NA_character_, .before = everything()) %>% 
   mutate(enrollment_site = 'MDA', .before = everything())
 
 dat_master_utah <- readRDS(file = file.path(path_ontrack_visit_outputs, "utah_data_all.rds")) %>% 
   filter(enrolled) %>% 
-  mutate(cohort = case_when(
-    sgmeligible == 1 ~ "SGM",
-    T ~ "SES"
-  )) %>% 
+  mutate( cohort = cohort_calculated) %>% 
   select(ID_RSR, participant_id, participant_id_2, ID_enrolled, cc_indicator, cohort, in_ematimes, withdrew_calc, withdrew_date_calc, v1_date_calc, v1_attend_calc, v2_date_calc, 
          v2_attend_ind_calc, v3_date_calc, v3_attend_ind_calc, v4_date_calc, v4_attend_ind_calc, withdrew_calc, withdrew_date_calc) %>% 
   rename(withdrew = withdrew_calc,

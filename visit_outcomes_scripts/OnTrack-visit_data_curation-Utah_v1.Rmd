@@ -1,0 +1,1293 @@
+---
+title: "On Track -- crosswalk and withdrawn ascertainment - UofU data"
+author: "Tony Banks"
+date: "8/3/2022"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+v1: modified from Break Free v4 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 90)
+
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(readxl)
+library(openxlsx)
+library(knitr)
+library(kableExtra)
+library(DT)
+library(Hmisc)
+library(haven)
+library(DBI)
+library(dbplyr)
+library(collateral)
+
+source("../paths.R")
+
+mydt <- function(...){datatable(...,rownames=F, extensions = 'Buttons', options = list(lengthMenu = c(10,20,50,100,200),
+                                                                                       autoWidth=T,
+    dom = 'lBrtip',
+    buttons = list(list(extend = 'colvis'),"copy","csv")
+  ),
+            filter = list(
+  position = 'top', clear = FALSE
+            ))}
+
+mymin <- function(...){ifelse(!all(is.na(...)),min(...,na.rm=T),NA_Date_)}
+
+```
+
+## Background
+
+* What is needed to finalize EMA data  
+  + Enrollment status
+    + what does partial enrollment and what do we want to do with their data?
+  + EMA start date
+    + EMA quit date is start date + 4 days
+    + EMA end date is start date + 14 days
+  + Decisions about how withdrawing affects your EMA data (Right Censoring?)
+* Summary of data sources
+  + Excel Tracker -- maintained by coordinators outside of EDC software called RSR
+  + Screeing survey (enrolled and unenrolled patients)
+  + Visit Survey (V1 - V5)
+    + This seems to 1/2 reliable places to ascertain visit attendance and withdrawals
+  + Data Checklist (indicators and basic dropdowns for each visit)
+  + Event Log
+    + Duplicates exist
+    + This seems to 1/2 reliable places to ascertain visit attendance and withdrawals
+  + EMA Data
+    + Found the first and last EMA timestamps per participant (where applicable)
+* Summary of QC done here
+  + Listed in Table of contents above
+* Next steps
+  + Strategize for plan to answer questions above
+  + Brian to ask Neetha for small updates to the SSRS reports
+  + Plan for resolution on the following discrepancies
+    + manual deduplication of Event log
+    + look at people not eligible, but I ascertained as enrolled
+    + finalize enrollment status
+    + for each visit, resolve inconsistencies in visit attendance
+    
+    
+**<span style="color: red;">notes of where manual QC is needed will be highlighted in red below</span>**
+
+This document will serve as the data pipeline to highlight and resolve discrepancies needed for Breakfree visit data. For now, the data here will focus
+
+## Data Import and Prep  
+  
+### Screener Data
+
+import screener. subset to records with a name. then create an enrolled version with pertinent columns
+
+```{r scr_import}
+###screener
+#scr <- read_xlsx("../../_data/4.16.21 AA Study Screening Data.xlsx")
+scr <- read_excel(file.path(path_ontrack_visit_inputs, "OnTrack Screening Data.xlsx"))
+
+scr <- scr %>%  rename_with(., ~str_to_lower(str_replace_all(.," ","_"))) %>% 
+  rename(ID_RSR = "subjectid", 
+         questionnaire_id = questionnaireid) %>% 
+  mutate(ID_RSR = as.character(ID_RSR)) %>% 
+  filter(!is.na(firstname)&!is.na(lastname)) %>% 
+  rename(quest_date_scr = questdate,
+         eligible_scr = eligible,
+         ID_enrolled = enrolled_id) 
+
+scr_narrow <- scr %>%
+  select(ID_RSR,ID_enrolled,questionnaire_id,quest_date_scr,eligible_scr)
+```
+
+
+### Questionnaire -- Visit 1 - 5
+Screener is processed above, but this section will do remaining questionnaires -- for visits 1 though 5.
+
+I only grab dates and skip processing questionnaire responses for now.
+
+
+```{r quest_import}
+###Other visit questionnaires
+quest <- read_xlsx(file.path(path_ontrack_visit_inputs, "OnTrack Questionnaire Data.xlsx")) %>% 
+  rename_with(., ~str_to_lower(str_replace_all(.," ","_"))) %>% 
+  rename(ID_RSR = subjectid,
+         quest_type = questtype,
+         quest_date = questdate) %>% 
+  mutate(ID_RSR = as.character(ID_RSR),
+         quest_type = str_to_lower(quest_type))
+
+quest_dates_wide <- quest %>% 
+  rename(ID_enrolled = enrolled_id) %>% 
+  pivot_wider(id_cols = c(ID_RSR, ID_enrolled),
+              names_from = quest_type,
+              values_from = quest_date,
+              names_prefix = "qdate_") %>% 
+  mutate(across(contains("qdate"), .fn = ~!is.na(.), .names = "{.col}_exist"))
+###EMA data
+#grab start and stop time of EMA data?
+```
+
+### Data Checklist
+
+import data checklist. this seems to be the most reliable source of status of visits (completed or not), but doesn't have dates.
+
+
+```{r chk_import}
+###study data checklist
+# chk_xlsx <- read_xlsx(file.path(path_ontrack_inputs, "OnTrack Data Checklist Status Cleanup  Report.xlsx"), guess_max = 10000) %>% 
+#   rename_with(., ~str_to_lower(str_replace_all(.," ","_"))) %>% 
+#   rename(ID_RSR=subjectid) %>% 
+#   mutate(ID_RSR = as.character(ID_RSR))
+
+chk <- readRDS(file.path(path_ontrack_visit_inputs, "chk_dat.RDS")) %>% 
+  rename_with(., ~str_to_lower(str_replace_all(.," ","_"))) %>% 
+  rename(ID_RSR=subjectid,
+         screening_cmpltdbyrsrchcode = screening_completedbyresearchcode,
+         infosession_statusrsrchcode  = infosession_statusresearchcode,
+         infosession_ineligrsncode  = infosession_ineligiblereasonresearchcode,
+         infosession_eligibleexpln = infosession_ineligibleexplain,
+         visit2_wristbandrightrsrchcode = visit2_wristbandrightresearchcode
+         ) %>% 
+  mutate(ID_RSR = as.character(ID_RSR)) %>% 
+  select(-idattributevalueset)
+
+if(F){
+  # to match the format of the xlsx chk file
+  chk %>% select(ID_RSR, status, screening_status, infosession_status, visit1_status, visit2_status, visit3_status, visit4_status, visit5_status) %>% View()}
+
+chk <- chk %>% 
+  rename_with(.fn = ~if_else(.=="ID_RSR",.,str_replace(paste0("chk_",.),"visit","v"))) %>% 
+  mutate(chk_finalstatus = case_when(
+    chk_v1_status=="Complete - Enrolled" & chk_v2_status=="Complete"& chk_v3_status=="Complete"& chk_v4_status=="Complete" ~ "Complete",
+    chk_v1_status=="Drop/Withdrawn"|chk_v2_status=="Drop/Withdrawn"| chk_v3_status=="Drop/Withdrawn"| chk_v4_status=="Drop/Withdrawn" ~ "Withdrawn",
+    coalesce(chk_v4_status,chk_v3_status,chk_v2_status,chk_v1_status) %in% c("Partial","No Show") ~ "Withdrawn - manual",
+    chk_v4_status ==  "Complete" ~ "Complete - Needs Review",
+    T ~ NA_character_)) %>% 
+  mutate(chk_visit_neverattend = !(is.na(chk_v1_status)|chk_v1_status=="No Show") #not missing first visit or no show
+         &!(is.na(chk_v2_status)|is.na(chk_v3_status)|is.na(chk_v4_status)),#and not missing any
+         chk_anycomplete = chk_v1_status == "Complete - Enrolled" | chk_v2_status=="Complete"| chk_v3_status=="Complete"| chk_v4_status=="Complete")
+
+chk_narrow <- chk %>% 
+  select(ID_RSR,ends_with("status"),contains("comment"), chk_anycomplete) %>% 
+  select(-contains("nrt")) %>% 
+  select(ID_RSR,contains("info_session"),contains("screening"),contains("v1"),contains("v2"),contains("v3"),contains("v4"),contains("v5"), chk_anycomplete, chk_finalstatus)
+
+
+```
+ 
+
+```{r chk_review}
+chk_narrow %>% 
+  filter(!is.na(chk_v1_status)|!is.na(chk_v2_status)|!is.na(chk_v3_status)|!is.na(chk_v4_status)) %>% 
+  select(contains("status")) %>% select(-contains("v5")) %>%  
+  group_by_all() %>% tally %>% ungroup %>% 
+  mutate(rown = row_number(),.before = everything()) %>% 
+  mydt()
+  
+  # 
+  # kable %>% kable_styling
+```
+
+### Event Log
+
+I subset to events for this document.
+
+```{r event_import}
+##Event Log
+# event_xlsx <- read_xlsx(file.path(path_ontrack_inputs, "On Track Event Dates.xlsx")) %>%
+#   #select(-...4, -...7) %>%
+#   rename_with(., ~str_to_lower(str_replace_all(.," ","_")))%>%
+#   rename(dt = eventdate)%>%
+#   rename(ID_RSR=subjectid,
+#          event_type = eventtype) %>%
+#     mutate(event_type = str_to_lower(str_replace_all(str_replace_all(event_type,"-","_")," +","_"))) %>%
+#   mutate(ID_RSR = as.character(ID_RSR))
+# 
+
+event <- readRDS(file = file.path(path_ontrack_visit_inputs, "event_dat.RDS")) %>% select(Study, SubjectID, EventType, StartDate, Note) %>%
+  rename(study = Study,
+         ID_RSR = SubjectID,
+         event_type = EventType,
+         #dt = StartDate,
+         note = Note) %>%
+  mutate(ID_RSR = as.character(ID_RSR)) %>% 
+  mutate(dt = as_date(StartDate), .before = StartDate) %>%
+  mutate(event_type = str_to_lower(str_replace_all(str_replace_all(event_type,"-","_")," +","_"))) %>% 
+  select(-StartDate)
+
+
+event <- event[!duplicated(event),]  # De duplicate the data. ~100 duplicate rows
+
+event_subset <- event %>% 
+  filter(str_detect(event_type,"(screening.+complete)|v._(complete|quest|no_show)|withdrawn")) %>% 
+  mutate(event_type_backup = event_type) %>% 
+  mutate(event_type = case_when(event_type == "21_participant_withdrawn" ~ "withdrawn",
+                                event_type == "03_screening_quest_complete" ~ "screen_quest_complete",
+                                event_type == "04_screening_complete" ~ "screening_complete",
+                                T ~ event_type),
+         ind = T) %>% 
+  arrange(ID_RSR,event_type,dt) %>% 
+  group_by(ID_RSR,event_type) %>% 
+  mutate(keep_me=case_when(ID_RSR == 125430 ~ dt > as_date("2018-01-01"), # appears to have no-showed v2-v4 in December 2017, then re-tried participation in February 2018
+                           (as_date(dt) %>% unique %>% length) == 1 ~ row_number()==1,
+                           event_type=="v3_no_show" ~ row_number()==1,
+                           event_type %in% c("screening_complete","screen_quest_complete") ~ row_number()==1,
+                           ID_RSR %in% c(122597, 124087, 124238) & event_type=="v5_no_show" ~ row_number()==1, # no-show to original date, then also no-show to rescheduled date
+                           ID_RSR == 140302 & event_type=="v2_no_show" ~ row_number() == 1, # no-show to original date, then also no-show to rescheduled date 
+                           ID_RSR == 124393 & event_type=="v2_complete" ~ row_number() == 2, # first record appears to be a phone call log
+                           T~NA))
+
+event_subset_view <- event_subset %>% 
+  filter(n()>1 & !(event_type %in% c("screening_complete","screen_quest_complete"))) %>% 
+  arrange(ID_RSR,event_type,dt) %>% 
+  mutate(group_id = cur_group_id()) %>% 
+  select(-ind,-study) #%>% filter(is.na(keep_me))
+  
+
+if(F){
+  "V1 Equipment-checked out" 
+"V1 Gift cards-given"
+"V1 Brief Quitting Advice"
+  #V4 qdate was in question.
+  event %>% filter(ID_RSR == 122225) %>% View
+  #qdate_visit4 was on 2017-07-25
+  quest_dates_wide %>% filter(ID_RSR==147113)
+}
+  
+```
+
+I pivot to a wide version of event file
+```{r event_wide}
+event_subset <- event_subset %>% ungroup %>% 
+  filter(replace_na(keep_me,T))
+event_wide <- event_subset %>% 
+  group_by(ID_RSR, event_type) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  pivot_wider(id_cols = ID_RSR,
+              names_from = event_type,
+              names_glue = "event_{event_type}_{.value}",
+              values_from = c(ind,dt,note)) %>% #View()
+  mutate(event_anyvisitcomplete = event_v1_complete_ind | event_v2_complete_ind | event_v3_complete_ind | event_v4_complete_ind) 
+
+event_wide <- event_wide %>%
+  select(order(colnames(event_wide))) %>%
+  relocate(ID_RSR)
+```
+
+
+### Event Tracker -- Excel maintained by study coordinators
+This document contains one source of visit 1 (v1) dates.
+The "pt w/ 2 ids" variable appears incorrect. Screener shows different names
+
+5 Cases of one ID_RSR being used with 2 participant_id
+
+```{r tracker}
+# The excel tracker for Utah appears to be split between CC1 and CC2 participants. Only have CC2 tracker currently
+
+track_cc2 <- read_xlsx(file.path(path_ontrack_visit_inputs, "Grafana Accounts SES clean.xlsx")) %>% 
+  rename_with(., ~str_to_lower(str_replace_all(str_remove_all(.,"-")," +","_"))) %>% 
+  rename(ID_RSR = pt_id,
+         participant_id = username,
+         ID_enrolled = eid,
+         v1_tracker = v1_date,
+         notes_tracker = notes) %>% 
+  filter(!is.na(ID_RSR)) %>% 
+  select(-password, -'pt_w/_2_ids') %>% 
+  mutate(ID_RSR = as.character(ID_RSR)) %>% 
+  mutate(phone = as.character(phone)) %>% 
+  arrange(ID_RSR) %>% 
+  group_by(ID_RSR) %>% 
+  mutate(
+    participant_id_2 = case_when(
+      n()>1 ~ participant_id[2],
+      T ~ NA_character_
+  ),
+    phone_2 = case_when(
+      n()>1 ~ phone[2],
+      T~ NA_character_
+    ),
+    notes_tracker_2 = case_when(
+      n()>1 ~ notes_tracker[2],
+      T ~ NA_character_
+    )
+  ) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()
+
+
+track_cc2 %>% group_by(ID_RSR) %>% summarise(n_participant_id = n()) %>% arrange(desc(n_participant_id))
+track_cc2 %>% arrange(ID_RSR) %>%  group_by(ID_RSR) %>% filter(n()>1) %>% mydt
+
+
+# track_cc2 %>% arrange(ID_RSR) %>%  group_by(ID_RSR) %>% 
+#   mutate(
+#     participant_id_2 = case_when(
+#       n()>1 ~ participant_id[2],
+#       T ~ NA_character_
+#   ),
+#     phone_2 = case_when(
+#       n()>1 ~ phone[2],
+#       T~ NA_character_
+#     ),
+#     notes_tracker_2 = case_when(
+#       n()>1 ~ notes_tracker[2],
+#       T ~ NA_character_
+#     )
+#   ) %>% 
+#   filter(row_number() == 1) %>% 
+#   ungroup()
+
+
+
+crswlk_trk_cc2 <- track_cc2 %>% select(participant_id, participant_id_2, ID_RSR, ID_enrolled) %>% mutate(cc_indicator = "2")
+
+# ###Excel Tracker
+# track <- read_xlsx("../Input/Project AA Participant Visit Date Data.xlsx") %>% 
+#   rename_with(., ~str_to_lower(str_replace_all(str_remove_all(.,"-")," +","_"))) %>% 
+#   rename(v2=v2_quit) %>% 
+#   mutate(pt_id = as.character(pt_id))
+# 
+# #deciding to convert noshows to missing -- warnings expected
+# track <- track %>% 
+#   mutate(across(c(v2,v3,v4,quit_date), .fns = convertToDate),
+#          across(where(is.POSIXt),as_date)) %>% 
+#   mutate(withdrew = !is.na(withdraw_date), .after=withdraw_date) %>% 
+#   rename_with(.fn = ~paste0(.,"_tracker")) %>% 
+#   rename(ID_enrolled=pt_id_tracker)
+```
+
+
+
+
+### Get timestamps of first and last EMAs
+```{r}
+ema_times <- readRDS(file.path(path_ontrack_visit_staged, "ema_first_last_dates.rds")) %>% 
+  mutate(ema_begin = hrts_AmericaChicago_first,
+         ema_end = hrts_AmericaChicago_last)
+
+```
+
+### Connect to RSR and get the Cohort Enrollment Table
+```{r}
+
+sort(unique(odbc::odbcListDrivers()[[1]]))
+con <- dbConnect(odbc::odbc(),
+                 driver = "ODBC Driver 17 for SQL Server",
+                 server ="HCI-DBStage",
+                 database = "ProdReadOnly",
+                 # START - Tony's edits			
+                 #uid = "tbd",
+                 #pwd = "tbd",
+                 Trusted_Connection = "yes"
+                 # END - Tony's edits
+)
+
+my_readtable <- function(mytable){
+  tbl(con, in_schema("dbo", mytable)) %>% as_tibble
+}
+
+cohort_enrollment <- my_readtable("CohortEnrollment") %>% filter(Study == "On Track") %>% mutate(ID_RSR = as.character(SubjectID)) %>% 
+  select(ID_RSR, Cohort_cohort_enrlmnt = Cohort)
+
+```
+
+### Calculated Cohort
+```{r}
+
+baseline_sgm_calc <- quest %>% filter(quest_type == "baseline") %>% select(ID_RSR, baseline_gender = dses1, baseline_sexual_identity = dses2) %>% 
+  mutate(
+    baseline_gender_sgm = baseline_gender %in% c(3,4),
+    baseline_sexual_identity_sgm = baseline_sexual_identity %in% c(2,3,4,5,6) & !ID_RSR %in% c("131423", "140523"), 
+    baseline_sgm_calc = baseline_gender_sgm | baseline_sexual_identity_sgm
+  )
+
+
+cohort_calculated <- baseline_sgm_calc %>% 
+  mutate(cohort_calculated = case_when(
+    baseline_sgm_calc ~ "SGM",
+    !baseline_sgm_calc ~ "SES")) %>% 
+  select(ID_RSR, cohort_calculated)
+
+
+```
+
+
+
+
+### Create crosswalk of essential IDs 
+```{r cwalk_join}
+ema_ids_cc1 <- ema_times %>% 
+  filter(cc_indicator == 1) %>% 
+  select(participant_id, cc_indicator) %>% 
+  mutate(
+    ID_RSR = str_split(participant_id, "_", simplify = T)[,1]
+  ) %>% 
+  filter(participant_id != '125430_R83') # Participant restarted the study with a different phone. Removing the first phone's data from inclusion
+
+ids_cc1 <- ema_ids_cc1 %>% 
+  left_join(scr %>% select("ID_RSR","ID_enrolled"),
+            by = c("ID_RSR" = "ID_RSR")) %>% 
+  filter(!(participant_id %in% c("126748.02_R95", "129686_R91", "131060_R75", "139360_R75"))) %>% # These participants have 2 MD2K folders/ID's. Due to resetting study or replacing malfunctioning phone mid-study
+  mutate(ID_enrolled = as.character(ID_enrolled)) %>% 
+  left_join(y = data.frame(participant_id_2 = c("126748.02_R95", "129686_R91", "131060_R75", "139360_R75"),
+                           ID_RSR = c("126748", "129686", "131060", "139360")),
+            by = c("ID_RSR"))
+
+
+###### make/redo crosswalk 
+cwalk_all <- rbind(ids_cc1, crswlk_trk_cc2) %>% ungroup()
+
+
+```
+
+### Combine all wide data
+```{r data_all_join}
+###### Ascertain inconsistencies -----------------------------------------------------------------------------------
+data_all <- cwalk_all %>% 
+  full_join(track_cc2 %>% select(-ID_enrolled, -participant_id) %>% mutate(in_track = T), by = c("ID_RSR", "participant_id_2")) %>% #1:1 match verified
+  full_join(quest_dates_wide %>% select(-ID_enrolled) %>% mutate(in_quest = T), by = "ID_RSR") %>% 
+  full_join(event_wide %>%  mutate(in_eventlog = T), by = c("ID_RSR")) %>% 
+  left_join(ema_times %>% select(-cc_indicator) %>% mutate(in_ematimes = T), by = c("participant_id")) %>% 
+  left_join(
+    ema_times %>% select(-cc_indicator) %>% mutate(in_ematimes_2 = T) %>% rename_all(~ paste0(., '_2')), by = "participant_id_2"
+  ) %>% 
+  full_join(chk %>% mutate(in_chk = T), by = c("ID_RSR")) %>%
+  full_join(scr %>% select(-ID_enrolled) %>% mutate(in_scr=T), by = c("ID_RSR")) %>%
+  full_join(y = cohort_enrollment, by = c("ID_RSR")) %>%
+  full_join(y = cohort_calculated, by = "ID_RSR") %>% 
+  mutate(across(where(is.logical), ~replace_na(.,F))) %>% 
+  mutate(in_SUMMARY = case_when(ID_RSR == '140264' ~ 'withdrew at v1',
+                               in_scr & in_chk & in_quest & in_eventlog & in_ematimes ~ "Enrolled",
+                               in_scr & in_chk & in_quest & in_eventlog & !in_ematimes ~ "Needs Review - no EMA data",
+                               #in_scr ~ "Screened",
+                               in_chk & !in_eventlog ~ "Pre-Screened",
+                               !in_scr & in_chk & in_eventlog & in_ematimes ~ "Needs Review - No corresponding screener",
+                               in_scr ~ "Screened",
+                               in_eventlog ~ "Needs Review - likely didn't finish screening",
+                               in_quest ~ "Needs Review - likely bad SQL report filtering",
+                               !in_scr & !in_track & !in_chk & !in_quest & !in_eventlog & in_ematimes ~ "MDA participant",
+                               T ~ NA_character_)) %>% 
+  ungroup() %>% 
+  mutate(test_participant = chk_status == "Test") %>% 
+  # filter(chk_status != 'Test') %>%  # remove test participants
+  mutate(pilot_participant = case_when(
+    ID_RSR %in% c('119166', '119167', '119209', '119552', '119603', '119800', '55522') ~ T,
+    T ~ F)) #%>% 
+  # filter(!pilot_participant) # remove pilot participants; there may be others
+
+if(F){
+  data_all %>% filter(in_eventlog & ! in_scr) %>% select(ID_RSR,in_chk,chk_screening_status,event_screen_quest_complete_ind,event_screen_quest_complete_note,event_screening_complete_ind,event_screening_complete_note,event_v1_complete_ind,event_v2_complete_ind, v1_tracker, v2_tracker, v3_tracker, v4_tracker,drop_date_tracker, withdraw_date_tracker,withdrew_tracker) %>% View
+}
+
+```
+
+
+# Begin V1 QC
+
+### Summary of all data sources
+
+Counts of people according to their belonging to each data source. you'll see that I added in variables to denote who needs review.
++ Note: We don't have an excel tracker for CC1 participants. This will factor in during the v1 date curation tasks below
+
+```{r data_all_summary}
+data_all %>% select(starts_with("in_"),in_SUMMARY) %>% 
+  group_by_all %>% #for 1/0 is easier to read than T/
+  count %>% 
+  ungroup %>% 
+  mutate(across(where(is.logical),as.numeric)) %>% 
+  kable %>% 
+  kable_minimal()
+```
+
+
+List of IDs to review based on them having data in the above datasets. 
+
+```{r}
+data_all %>% filter(str_detect(in_SUMMARY,"Needs Review")) %>% 
+  select(ID_RSR,in_SUMMARY,chk_infosession_status,chk_screening_status,chk_v1_status) #%>% 
+  #mydt
+```
+
+### Looking at the missing EMA data Needs Review Cases - missing ema data but shows enrolled
+```{r}
+data_all %>% filter(in_SUMMARY %in% c("Needs Review - no EMA data") & chk_v1_status %in% c("Complete - Enrolled")) %>% 
+  select(participant_id, cc_indicator, in_SUMMARY, everything())
+
+
+
+```
+
+
+
+
+### Creating data table of all cases with V1 discrepencies (including start_ema). 
+```{r}
+data_v1_date_problems <- data_all %>%
+  filter(!(in_SUMMARY %in% c('MDA participant', 'withdrew at v1'))) %>% 
+  filter(
+    (in_track & xor(is.na(v1_tracker), is.na(event_v1_complete_dt)) | xor(is.na(event_v1_complete_dt), is.na(ema_begin))) | #True if 1-2 are NA, False if 0 or 3 are NA
+    (in_track & v1_tracker != as_date(event_v1_complete_dt)) | 
+      (in_track & v1_tracker != as_date(ema_begin)) | 
+      as_date(event_v1_complete_dt) != as_date(ema_begin)) #%>% select(ID_RSR,participant_id,v1_tracker,event_v1_complete_dt, ema_begin,notes_tracker,chk_v1_status,chk_v1_comments1,chk_v1_comments2,qdate_baseline, ema_end)
+
+#view(data_v1_date_problems)
+
+#data_v1_date_problems %>% filter(xor(is.na(v1_tracker), is.na(event_v1_complete_dt)) | xor(is.na(event_v1_complete_dt), is.na(ema_begin))) %>% mydt
+
+#data_v1_date_problems %>% summarise(total_counts = n())
+
+```
+
+
+### Group date conflict types 
+```{r}
+data_v1_date_problems <- data_v1_date_problems %>% mutate( v1_date_conflict_type = case_when(
+    cc_indicator == "2" & is.na(v1_tracker) & !is.na(ema_begin) & !is.na(event_v1_complete_dt) ~ "tracker missing",
+    !is.na(v1_tracker) & is.na(ema_begin) & !is.na(event_v1_complete_dt) ~ "EMA missing",
+    !is.na(v1_tracker) & !is.na(ema_begin) & is.na(event_v1_complete_dt) ~ "event missing",
+    is.na(v1_tracker) & is.na(ema_begin) & !is.na(event_v1_complete_dt) ~ "tracker and EMA missing",
+    is.na(v1_tracker) & !is.na(ema_begin) & is.na(event_v1_complete_dt) ~ "tracker and event missing",
+    !is.na(v1_tracker) & is.na(ema_begin) & is.na(event_v1_complete_dt) ~ "EMA and event missing",
+    v1_tracker == as_date(ema_begin) & v1_tracker != as_date(event_v1_complete_dt) ~ "event discrepency",
+    v1_tracker != as_date(ema_begin) & v1_tracker == as_date(event_v1_complete_dt) ~ "EMA discrepency",
+    v1_tracker != as_date(ema_begin) & v1_tracker != as_date(event_v1_complete_dt) & as_date(ema_begin) != as_date(event_v1_complete_dt) ~ "No agreement",
+    v1_tracker != as_date(ema_begin) & as_date(ema_begin) == as_date(event_v1_complete_dt) ~ "tracker discrepency"
+)) %>% arrange(v1_date_conflict_type) %>% select(v1_date_conflict_type, ID_RSR,participant_id, cc_indicator, v1_tracker,event_v1_complete_dt, ema_begin,notes_tracker, chk_v1_status,#chk_v1_comments1,chk_v1_comments2,
+                                                 event_v1_complete_note, qdate_baseline, ema_end
+  ) %>% filter(!is.na(v1_date_conflict_type))
+
+#data_v1_date_problems %>% arrange(v1_date_conflict_type) %>% view()
+
+#v1_date_problems <- data_v1_date_problems %>% select(ID_RSR, v1_date_conflict_type)
+
+data_v1_date_problems %>% group_by(v1_date_conflict_type) %>% summarise(count = n()) %>% arrange(desc(count))
+```
+
+### Conflict type: tracker and EMA missing (n=11). For V1 date, use event log. For analysis eligibility, inspect on individual level - likely all ineligible
+
+<!-- + 12 of the 13 count towards the 26 counts flagged above as "Needs Review - No corresponding tracker or EMA data". Looking at RSR, these all appear to be participants from the pilot -->
+
+```{r}
+# data_v1_date_problems <- data_v1_date_problems %>% mutate(manual_comments = case_when(
+#   ID_RSR %in% c("120878") ~ "Ineligible"  # V1 Notes: "PT disclosed she uses Wellbutrin during consent overview - RA said she is ineligible for the study"
+# ))
+
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "tracker and EMA missing") 
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+
+confl_dat %>% mydt
+
+```
+
+<!-- ### Reviewing remaining  of the counts of "Needs Review - No corresponding tracker or EMA data" -->
+
+<!-- <!-- + ID_RSR 120204: Possible equipment malfunction. V3 notes: "Right wrist not working - she takes her charger to work" --> -->
+
+<!-- <!-- + ID_RSR 122513 & 131279: No show for info session. No further evidence of participation. Screening status listed as eligible. --> -->
+<!-- <!-- + ID_RSR 130473: Screened eligible, but no further evidence of participation. --> -->
+<!-- <!-- + Remaining 11 were *ineligible*, *not interested*, or *unable to contact* --> -->
+
+<!-- ```{r} -->
+<!-- confl_dat <- data_all %>% filter(in_SUMMARY == "Needs Review - No corresponding tracker or EMA data") -->
+
+<!-- if(F){confl_dat %>% view} -->
+
+<!-- if(F){confl_dat %>% filter(!(ID_RSR %in% confl_ids)) %>% view} -->
+
+<!-- if(F){confl_dat %>% filter(chk_v1_status == "Complete - Enrolled") %>% view} -->
+
+<!-- confl_dat %>% filter(!(ID_RSR %in% confl_ids)) %>% select(ID_RSR, in_track, chk_info_session_status, chk_screening_status, chk_v1_status,ema_begin) %>% mydt -->
+
+<!-- ``` -->
+
+
+
+### Conflict type: EMA discrepency (n=1) - Use event date (which agrees with tracker date)
+```{r}
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "EMA discrepency")
+
+if(F){confl_dat %>% view}
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+
+confl_dat %>% mydt
+
+```
+
+<!-- ### Conflict type: Ema missing (n=7) - resolved above (participants withdrew) -->
+
+### Conflict type: event discrepency (n=1) - Use tracker (& EMA) date
+```{r}
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "event discrepency")
+
+if(F){confl_dat %>% view}
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+
+confl_dat %>% mydt
+```
+
+### Conflict Type: tracker discrepency (n=1). Use event (and EMA) date
+```{r}
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "tracker discrepency")
+
+if(F){confl_dat %>% view}
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+
+confl_dat %>% mydt
+
+```
+
+
+
+### Conflict Type: EMA and event missing (n=0) 
+```{r}
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "EMA and event missing")
+
+if(F){confl_dat %>% view}
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+
+confl_dat %>% mydt
+
+```
+
+### Conflict Type: Event missing (n=0) 
+```{r}
+confl_dat <- data_v1_date_problems %>% filter(v1_date_conflict_type == "event missing")
+
+if(F){confl_dat %>% view}
+
+confl_ids <- confl_dat$ID_RSR
+
+if(F){data_all %>% filter(ID_RSR %in% confl_ids) %>% view}
+confl_dat %>% mydt
+```
+
+
+
+
+### Clean V1
+
+```{r v1_cleanup}
+data_all <- data_all %>% 
+  full_join(y = data_v1_date_problems %>% select(ID_RSR, v1_date_conflict_type), by = c("ID_RSR")) %>% 
+  #screened if in screeer, eventlog (subset of records), or have screening status of screened
+  mutate(status_calc_scr = in_scr | in_eventlog | chk_screening_status %in% c("Eligible","Ineligible"),
+         #determine eligibility based on data checklist eligibility or screener. eligible if considered eligible in either. 
+         status_calc_elig = case_when(chk_screening_status == "Eligible" | eligible_scr == 1 ~ T,
+                                      #else if ineligible in either, then not eligible
+                                      chk_screening_status == "Ineligible" | eligible_scr == 0 ~ F,
+                                      #otherwise missing
+                                      T ~ NA),
+         #look across data checklist, questionnaire, or event log to see if any visits are complete
+         status_any_sign_of_enr = case_when(replace_na(chk_v1_status,"")=="Partial - Enrolled" ~ "Partial - withdrew",
+                                            chk_anycomplete | in_quest |event_anyvisitcomplete ~ "Complete",
+                                      !is.na(ID_enrolled) ~ "Partial - withdrew", # 2 people who i double checked withdraw mid-visit
+                                     T ~ "No Attend"),
+         status_calc_beganema = !is.na(ema_begin), 
+         v1_date_calc = case_when(
+           v1_date_conflict_type == "tracker and EMA missing" ~ as_date(event_v1_complete_dt), #V1 date flagged for missing tracker and EMA dates; n=11 (explained above)
+           v1_date_conflict_type == "EMA discrepency" ~ as_date(event_v1_complete_dt), #EMA begin differs from v1_tracker and event log - use v1_tracker (which is in agreement with event log); n=1
+           # v1_date_conflict_type == "EMA missing" ~ event_v1_complete_dt, #EMA missing. v1_tracker and event log date in agreement. Pt likely withdrew;
+           v1_date_conflict_type == "tracker discrepency" ~ as_date(event_v1_complete_dt), #tracker differs from event log and EMA; n=1
+           v1_date_conflict_type == "event discrepency" ~ as_date(v1_tracker), #tracker and EMA agree; n=1
+           #v1_date_conflict_type == "EMA and event missing" ~ v1_tracker, #ema and event log missing
+           #v1_date_conflict_type == "event missing" ~ v1_tracker, #ema missing; v1_tracker and EMA agree; n=1
+           !is.na(v1_tracker) & replace_na(v1_date_conflict_type, "") == "" ~ as_date(event_v1_complete_dt), #dates exist and no conflicts; n = 275
+           T ~ as_date(event_v1_complete_dt) #NA_Date_
+           ),
+         #take partial if data checklist says so
+         v1_attend_calc = case_when(replace_na(chk_v1_status,"")=="Partial - Enrolled" ~ "Partial - withdrew",
+                                        #search for withdrew based on event log date
+                                        as_date(event_withdrawn_dt)<=as_date(v1_date_calc) ~ "Partial - withdrew",
+                                        #if data checklist, 
+                                        replace_na(chk_v1_status,"")=="Complete - Enrolled" | replace_na(qdate_baseline_exist,F) | 
+                                          event_v1_complete_ind | event_v1_quest_completed_ind ~ "Complete",
+                                        !is.na(ID_enrolled) ~ "Partial - withdrew",
+                                        T ~ "No Attend"),
+         v1_attend_ind_needsreview = between(qdate_baseline_exist+event_v1_complete_ind+event_v1_quest_completed_ind,1,2)) %>% 
+  mutate(event_withdrawn_dt = case_when(
+    ID_RSR == '140333' ~ ymd('2019-05-17'),
+    T ~ event_withdrawn_dt
+  )) %>% 
+  mutate(v2_date_calc = as_date(event_v2_complete_dt), 
+         v3_date_calc = as_date(event_v3_complete_dt),
+         v4_date_calc = as_date(event_v4_complete_dt),
+         v5_date_calc = as_date(event_v5_complete_dt))
+
+
+
+if(F){data_all %>% group_by(v1_attend_calc, v1_attend_ind_needsreview) %>% summarise(counts = n()) %>% View()}
+
+data_all <- data_all %>% 
+  mutate(enrolled = case_when(
+    pilot_participant ~ F,
+    test_participant ~ F,
+    v1_attend_calc=="Complete" & status_calc_beganema & ID_RSR != "140264" ~ T, # ID_RSR 140264 withdrew during V1 
+    T~F))
+
+enrolled <- data_all %>% 
+  #define enrollment as completing V1 and beginning EMA
+  filter(enrolled == T) %>%  #| ID_RSR %in% c('125075', '127732', '129320', '141123', '142549')) %>% 
+  rowwise() %>% 
+  mutate(v1_quest_date_calc = min(c_across(c(qdate_baseline,event_v1_quest_completed_dt)))) %>% 
+  ungroup %>% 
+  mutate(v1_quest_date_calc = as_date(coalesce(v1_quest_date_calc,qdate_baseline,event_v1_quest_completed_dt)) )%>% 
+  mutate(v2_attend_ind_calc = case_when(v1_attend_calc == "Partial - withdrew" ~ "Withdrew - Previous",
+                                        #BO: add in search for withdrew based on event log date
+                                        #BO: add in review for withdrew based on tracker date
+                                        replace_na(chk_v2_status,"")=="Drop/Withdrawn" ~ "Withdrew",
+                                        #tentatively skp partial completes
+                                        # replace_na(chk_v2_status,"")=="Partial" ~ "Partial",
+                                        replace_na(chk_v2_status,"")=="Complete" | replace_na(qdate_visit2_exist,F) | 
+                                          event_v2_complete_ind| event_v2_quest_completed_ind ~ "Complete",
+                                        T ~ "No Attend"),
+         v2_attend_ind_needsreview = between(qdate_visit2_exist+event_v2_complete_ind+event_v2_quest_completed_ind,1,2)
+  )
+```
+
+<!-- ### QC V1 date -->
+
+<!-- For those who have event date different from date in Excel tracker, I provide list of all dates related to V1.  -->
+<!-- `v1_attend_date_calc` is my manually calculated date, based on logic in the code chunk above. -->
+
+<!-- ```{r qc_v1_date} -->
+<!-- data_all %>% filter(replace_na(v1_tracker != as_date(event_v1_complete_dt),T)) %>% filter(!is.na(v1_tracker)|!is.na(event_v1_complete_dt))%>% select(ID_RSR,participant_id,v1_tracker,event_v1_complete_dt,v1_attend_date_calc, v1_date_calc, v1_date_conflict_type, ema_begin,notes_tracker,chk_v1_status,chk_v1_comments1,chk_v1_comments2,qdate_baseline, ema_end) %>% mydt() -->
+<!--   # print(n=50, max_extra_cols = 4) #%>% kable %>% kable_classic(full_width = T) -->
+<!-- ``` --> 
+
+### QC V1 Attendence
+* 141114: withdrew at v1 visit
+* 125075, 127732, 129320, 141123, 142549: appear to completed study, however, were not enrolled(?) and have no corresponding EMA data. Need CC1 excel tracker to maybe find enrolled_id's
+
+  + 125075: two folders in the MD2K CC1 export folder, "125075" and "125075_R71"
+    ++ "125075" folder contains no EMA data: there is a scheduler file. The day start file contains 10 days, 'Friday, January 5, 2018' through 'January 22, 2018' (not continuous)
+    ++ "125075_R71" folder contains no EMA data: there is a scheduler file. The day start file contains one day, "Friday, January 5, 2018 "
+
+  + 127732: appears to have random EMA data in box folder but it wasn't grabbed because there is not "+processed" version of the EMA data. Will need to request that from MD2k
+
+  + 129320, 141123, 142549: have no corresponding folders in the MD2K CC1 data folder
+
+```{r qc_v1_attend_calc}
+# Summary of V1 attendence in all of our data
+data_all %>% count(v1_attend_calc,status_any_sign_of_enr,status_calc_beganema, in_ematimes)
+
+#above QC looks good, but a few folks need review:
+
+# 5 completed V1, but didn't get EMA -- confirm that we shouldn't have it
+# None have enrollment ID's
+data_all %>% filter(v1_attend_calc=="Complete" & !status_calc_beganema) %>% 
+  select(ID_RSR, ID_enrolled, enrolled, v1_attend_calc, event_v1_complete_ind, chk_v1_status, chk_v2_status, event_v2_complete_ind,  #v1_attend_date_calc,
+         status_calc_beganema) %>% 
+  mydt
+
+if(F){data_all %>% filter(v1_attend_calc=="Complete" & !status_calc_beganema) %>% 
+  filter(chk_v1_status == "Complete - Enrolled") %>% View
+  
+  # This group appears to have made it through v4 and most through v5
+  # Unclear why they have no EMA data
+  
+  }
+
+```
+
+
+```{r}
+
+if(F){
+#v1 summary
+data_all %>% count(status_any_sign_of_enr,chk_v1_status,qdate_baseline_exist,event_v1_complete_ind,event_v1_quest_completed_ind,v1_attend_calc,v1_attend_ind_needsreview,status_calc_beganema) %>% View
+  #below I have more granular summary of those who need review from the above counts.
+}
+if(F){
+  #count of eligibility among v1 completes -- review of ineligible individuals will be later
+  data_all %>% filter(v1_attend_calc=="Complete" & status_calc_beganema) %>% count(in_scr,eligible_scr)
+}
+```
+
+```{r enrollment_review}
+### enrolled (completed V1 and began EMA) -- but still needs further review
+
+# 1 was enrolled but their screener is missing; ID_RSR 125554
+enrolled %>% filter(replace_na(eligible_scr,0)!=1) %>% 
+  select(ID_RSR,eligible_scr) %>% 
+  kable %>% kable_minimal
+
+# 0 enrolled, but no baseline data
+enrolled %>% filter(!qdate_baseline_exist) %>% select(ID_RSR) %>% kable 
+
+if(F){
+  enrolled %>% filter(!event_v1_complete_ind) %>% View 
+  
+  # ID_RSR 140264 withdrew at v1 during the equipment explanation process.
+  # Updating this participant to not be counted as Enrolled in the steps above
+}
+
+
+
+```
+
+
+
+
+### EMA Period vs Right Censor Comparison
++ Looking at the time difference between complete EMA reporting period vs right censor (14 days from V1)
+```{r}
+enrolled <- enrolled %>% mutate(ema_period = difftime(ema_end, ema_begin, units = "days"),
+                                v1_plus14_dt = v1_date_calc + days(14), #adding 15 because its treating it as 12:00am (midnight) on the listed day
+                                #v1_plus14_period = v1_plus14_dt - v1_date_calc,
+                                #ema_vs_right_censor = ema_period - v1_plus14_period, #wrong calculation,
+                                ema_days_past_14 = difftime(ema_end, v1_plus14_dt, units = "days"),
+                                ema_days_past_v1 = difftime(as_date(ema_end), v1_date_calc, units = "days")) %>%
+  replace_na(list(ema_days_past_v1 = ddays(0), ema_days_past_14 = ddays(-14))) 
+
+
+#enrolled <- enrolled %>% replace_na(list(ema_days_past_v1 = ddays(0), ema_days_past_14 = ddays(-14)))
+#enrolled <- enrolled %>% mutate(ema_days_past_v1_bin = cut2(as.numeric(ema_days_past_v1), c(0:40)))
+
+if(F){enrolled %>% select(ID_RSR, v1_date_calc, v1_plus14_dt, ema_begin, ema_end, ema_period, ema_days_past_v1) %>% view}
+
+ema_timespan_counts <- enrolled %>% group_by(ema_days_past_v1) %>% summarise(n=n())
+
+# Get cascading cumulative counts: Counts for participants with EMA data up to or beyond day specified
+counts_EMA_days_grtr_or_eq <- c()
+for(i in 1:nrow(ema_timespan_counts)){
+  total <- sum(ema_timespan_counts$n)
+  temp <- total - sum(ema_timespan_counts$n[0:(i-1)])
+  counts_EMA_days_grtr_or_eq <- c(counts_EMA_days_grtr_or_eq, temp)
+}
+counts_EMA_days_grtr_or_eq
+
+if(F){ema_timespan_counts %>% mutate(counts_EMA_days_grtr_or_eq) %>% view}
+
+## Histogram with cascading cumulative
+#ggplot(ema_timespan_counts, aes(x= ema_days_past_v1)) + geom_area(aes(y=counts_EMA_days_grtr_or_eq), fill= "blue", color = "grey", alpha = 0.3) + geom_point(aes(y=counts_EMA_days_grtr_or_eq)) + geom_label_repel(aes(y=counts_EMA_days_grtr_or_eq, label = counts_EMA_days_grtr_or_eq),              box.padding = 0.5, point.padding = 0.3) + geom_vline(xintercept = 14, linetype = "dashed", color = "red", size = 1)
+
+## Scatterplot/ Area with cascading cumulative - capped at 14 days
+ggplot(ema_timespan_counts, aes(x= ema_days_past_v1)) + geom_area(aes(y=counts_EMA_days_grtr_or_eq), fill= "blue", color = "grey", alpha = 0.3) + geom_point(aes(y=counts_EMA_days_grtr_or_eq)) + geom_vline(xintercept = 14, linetype = "dashed", color = "red", size = 1, alpha = 0.35) + geom_text(aes(y=counts_EMA_days_grtr_or_eq, label = counts_EMA_days_grtr_or_eq), vjust=-1.0)  + ylim(c(0,320)) + scale_x_continuous(breaks = c(0:15), limits = c(0,15)) + labs(x = "Days of EMA data since V1", y = "Cumulative Participant Count", title = "Cumulative Participant Count vs Days of Active EMA Pings after V1")
+
+
+```
+
+
+```{r}
+## Historgram w counts
+ggplot(enrolled, aes(ema_days_past_v1)) + stat_bin(binwidth = 1, color = "#000000", fill = "#0099F8") + ylim(c(0,100))+ stat_bin(binwidth = 1, geom = "text", aes(label=..count..), vjust=-1.0) + labs(x = "Days of EMA data since V1", y = "Participant Count", title = "Participant Count vs Days of Active EMA Pings after V1")+ theme(panel.grid.major = element_line(color = "grey", size = (0.05)), panel.grid.minor.x =  element_line(color="grey", size = (0.01))) + geom_vline(xintercept = 14, linetype = "dashed", color = "red", size = 1)
+
+
+
+## Historgram w counts with limited x axis
+ggplot(enrolled, aes(ema_days_past_v1)) + stat_bin(binwidth = 1, color = "#000000", fill = "#0099F8") + ylim(c(0,100))+ stat_bin(binwidth = 1, geom = "text", aes(label=..count..), vjust=-1.0) + labs(x = "Days of EMA data since V1", y = "Participant Count", title = "Participant Count vs Days of Active EMA Pings after V1")+ theme(panel.grid.major = element_line(color = "grey", size = (0.05)), panel.grid.minor.x =  element_line(color="grey", size = (0.01))) + geom_vline(xintercept = 14, linetype = "dashed", color = "red", size = 1) + xlim(-5, 30)
+
+```
+
+
+```{r}
+
+#enrolled %>% filter(ema_days_past_14 > 0) %>% .$ema_days_past_14 %>% boxplot()
+
+enrolled %>% filter(ema_days_past_14 > 0) %>% ggplot(., aes(ema_days_past_14)) + stat_bin(binwidth = 1, color = "#000000", fill = "#0099F8") + ylim(c(0,20))+ stat_bin(binwidth = 1, geom = "text", aes(label=..count..), vjust=-1.0) + scale_x_continuous(minor_breaks = seq(0, 26, by=1)) +labs(x="Days >14 from V1") + theme(panel.grid.major = element_line(color = "grey", size = (0.05)), panel.grid.minor.x =  element_line(color="grey", size = (0.001)))
+
+#enrolled %>% arrange(desc(ema_days_past_14)) %>% view
+
+```
+
+### EMA Dates with >14 days past v1
+```{r}
+if(F){enrolled %>% select(ID_RSR, v1_date_calc, v1_plus14_dt, ema_begin, ema_end, ema_period, ema_days_past_v1) %>% view}
+
+if(F){enrolled %>% filter(ema_days_past_v1 > ddays(14)) %>% view}
+
+enrolled %>% filter(ema_days_past_v1 > ddays(14)) %>% select(ID_RSR, ema_days_past_v1, v1_date_calc, ema_end, v1_plus14_dt, v1_tracker, chk_v4_comment1, chk_v4_comment2) %>% mydt
+
+
+
+```
+
+
+
+
+### V1 Questionnaire review
+
+Inconsistent existence of questionnaire data (event log vs actual data). I look for existence of only one data stream. I ignore partial completes, but only explore among completes
+```{r v1_quest_ind_review}
+enrolled %>% filter(v1_attend_calc=="Complete" & (!qdate_baseline_exist | !event_v1_quest_completed_ind)) %>% 
+  select(ID_RSR,qdate_baseline_exist,event_v1_quest_completed_ind,event_v1_quest_completed_note,event_v1_complete_note,chk_v1_comments1,chk_v1_comments2)
+```
+Inconsist v1 dates (event log vs questionnaire date)
+ - v1_quest_date_calc -- the value I plan to take, which is minimum of the dates.
+ 
+```{r v1_quest_date_review}
+if(F){enrolled %>% #filter(as_date(qdate_baseline)!= as_date(event_v1_quest_completed_dt)) %>%
+  filter(replace_na(as_date(event_v1_quest_completed_dt)!=as_date(qdate_baseline) | as_date(event_v1_quest_completed_dt)!=v1_date_calc,F)) %>% 
+  mutate(across(c(qdate_baseline,event_v1_quest_completed_dt),~as_date(.))) %>% view}
+
+
+enrolled %>% #filter(as_date(qdate_baseline)!= as_date(event_v1_quest_completed_dt)) %>%
+  filter(replace_na(as_date(event_v1_quest_completed_dt)!=as_date(qdate_baseline) | as_date(event_v1_quest_completed_dt)!=v1_date_calc,F)) %>% 
+  select(ID_RSR,v1_quest_date_calc,qdate_baseline,event_v1_quest_completed_dt,event_v1_quest_completed_note,v1_date_calc,event_v1_complete_note) %>% mutate(across(c(qdate_baseline,event_v1_quest_completed_dt),~as_date(.))) %>% 
+  mydt
+```
+
+# Begin V2 QC
+
+### Creating data table of all cases missing V2 dates & no "no-show date" indicated
+
+* 5 participants identified
+* All 5 did not attend v2 through v5
+* 4 of 5 were noted as withdrawn
+* The 5th was recorded in notes as withdrawing during their V2 visit on 2019-05-17. Updated in data_all above
+```{r}
+
+if(F){data_all %>% filter(!is.na(ID_enrolled)) %>% select(ID_enrolled, contains("V2") | contains("v2")) %>% head(10) %>% view}
+
+data_v2_date_problems <- enrolled %>%
+                         filter(is.na(event_v2_complete_dt) & is.na(event_v2_no_show_dt)) 
+                                   
+                            
+data_v2_date_problems %>% summarise(total_counts = n())
+
+data_v2_date_problems %>% select(ID_RSR, v1_date_calc, event_withdrawn_dt, chk_v2_status)
+
+```
+
+
+### V2 status
+```{r}
+data_all %>% filter(enrolled) %>% group_by(chk_v2_status) %>% summarise(n=n())
+
+enrolled %>% count(chk_v2_status)
+
+#data_all %>% filter(enrolled) %>% group_by(chk_v1_status, chk_v2_status, chk_v3_status, chk_v4_status) %>% summarise(n=n())
+```
+
+### V2 questionnaire Date
+```{r}
+data_all %>% filter(enrolled) %>% select(v2_date_calc, qdate_visit2, event_v2_quest_completed_dt)
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v2_quest_completed_dt) >= v2_date_calc) %>% count() #203
+data_all %>% filter(enrolled) %>% filter(is.na(event_v2_quest_completed_dt) & is.na(v2_date_calc)) %>% count() #24
+
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v2_quest_completed_dt) > as_date(qdate_visit2)) %>% select(ID_RSR, v2_date_calc, qdate_visit2, event_v2_quest_completed_dt) 
+
+# 3 cases where the qdate_visit2 date is before the event_v2_quest_completed_dt. 1 of those cases the qdate_visit2 is before the v2_date_calc, and therefore is disregarded. The other two cases the qdate_visit2 matches the date of v2_date_calc, and the notes show the participant filled out a paper questionarre and the responses were uploaded to RSR by the research assistant
+
+
+data_all <- data_all %>% 
+  mutate(
+    v2_quest_date_calc = case_when(
+      !enrolled ~ NA_Date_,
+      #when qdate_visit2 happens first and it matches up with v2 date calc, take qdate_visit2
+      as_date(event_v2_quest_completed_dt) > as_date(qdate_visit2) & as_date(qdate_visit2) >= v2_date_calc ~ as_date(qdate_visit2),
+      T ~ as_date(event_v2_quest_completed_dt)
+    )
+  )
+
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v2_quest_completed_dt) > as_date(qdate_visit2)) %>% select(ID_RSR, v2_date_calc, qdate_visit2, event_v2_quest_completed_dt, v2_quest_date_calc)
+
+```
+
+
+
+# Begin V3 QC
+
+### Creating data table of all cases with missing v3 date. 4 cases identified - all due to pt withdrawing at v3
+```{r}
+
+if(F){data_all %>% filter(!is.na(ID_enrolled)) %>% select(ID_enrolled, contains("V3") | contains("v3")) %>% head(10) %>% view}
+
+data_v3_date_problems <- data_all %>%
+  filter(enrolled) %>%
+  filter(chk_v2_status != 'Drop/Withdrawn') %>% 
+  filter(is.na(event_v3_complete_dt) & is.na(event_v3_no_show_dt)) 
+                            
+data_v3_date_problems %>% summarise(total_counts = n())
+
+data_v3_date_problems %>% count(is.na(event_withdrawn_dt))
+
+data_v3_date_problems %>% count(withdrew = !is.na(event_withdrawn_dt), chk_v3_status)
+```
+
+### V3 questionnaire Date
+```{r}
+data_all %>% filter(enrolled) %>% select(v3_date_calc, qdate_visit3, event_v3_quest_completed_dt)
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v3_quest_completed_dt) >= v3_date_calc) %>% count() #199
+data_all %>% filter(enrolled) %>% filter(is.na(event_v3_quest_completed_dt) & is.na(v3_date_calc)) %>% count() #25
+
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v3_quest_completed_dt) > as_date(qdate_visit3)) %>% select(ID_RSR, v3_date_calc, qdate_visit3, event_v3_quest_completed_dt) 
+
+# 1 case where the qdate_visit3 date is before the event_v3_quest_completed_dt. The comments for event_v3_quest_completed_note indicates the participant filled out a paper questionarre on 2019-07-29
+
+
+data_all <- data_all %>% 
+  mutate(
+    v3_quest_date_calc = case_when(
+      !enrolled ~ NA_Date_,
+      ID_RSR == "141899" ~ as_date("2019-07-29"),
+      T ~ as_date(event_v3_quest_completed_dt)
+    )
+  )
+
+```
+
+
+# Begin V4 QC
+### Creating data table of all cases with V4 discrepencies - no new withdraws at V4
+```{r}
+
+if(F){data_all %>% filter(!is.na(ID_enrolled)) %>% select(ID_enrolled, contains("V4") | contains("v4")) %>% head(10) %>% view}
+
+data_v4_date_problems <- data_all %>%
+  filter(enrolled) %>%
+  filter(chk_v2_status != 'Drop/Withdrawn' & chk_v3_status != 'Drop/Withdrawn') %>% 
+  filter(is.na(event_v4_complete_dt) & is.na(event_v4_no_show_dt)) 
+                            
+data_v4_date_problems %>% summarise(total_counts = n())
+
+```
+
+
+### V4 questionnaire Date
+```{r}
+data_all %>% filter(enrolled) %>% select(v4_date_calc, qdate_visit4, event_v4_quest_completed_dt)
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v4_quest_completed_dt) >= v4_date_calc) %>% count() # 203
+data_all %>% filter(enrolled) %>% filter(is.na(event_v4_quest_completed_dt) & is.na(v4_date_calc)) %>% count() # 21
+
+
+# 1 participant who attended v4 but doesn't have questionnaire data nor an event_v4_quest_complete_dt
+# 1 participant who attended v4 and has questionnaire data but no event_v4_quest_complete_dt
+# 32 participants who attended v4 and have event_v4_quest_complete_dt but no questionnaire data
+data_all %>% 
+  filter(enrolled) %>% 
+  filter(!is.na(v4_date_calc) & (is.na(qdate_visit4) | is.na(event_v4_quest_completed_dt))) %>% 
+  select(ID_RSR, v4_date_calc, qdate_visit4, event_v4_quest_completed_dt) 
+
+data_all %>% filter(enrolled) %>%  filter(as_date(event_v4_quest_completed_dt) > as_date(qdate_visit4)) %>% select(ID_RSR, v4_date_calc, qdate_visit4, event_v4_quest_completed_dt) %>% nrow() # 0
+
+# 1 case where event_v4_quest_completed_dt is missing, but qdate_visit4 is not
+data_all %>% filter(enrolled) %>% filter(is.na(event_v4_quest_completed_dt) & !is.na(qdate_visit4)) %>% 
+  select(ID_RSR, v4_date_calc, qdate_visit4, event_v4_quest_completed_dt) 
+
+data_all <- data_all %>% 
+  mutate(
+    v4_quest_date_calc = case_when(
+      !enrolled ~ NA_Date_,
+      T ~ as_date(event_v4_quest_completed_dt)
+    )
+  )
+
+```
+
+
+# Begin V5 QC
+### Creating data table of all cases with V5 discrepencies. 
+```{r}
+
+if(F){data_all %>% filter(!is.na(ID_enrolled)) %>% select(ID_enrolled, contains("V5") | contains("v5")) %>% head(10) %>% names}
+
+data_v5_date_problems <- data_all %>% 
+  filter(enrolled) %>%
+  filter(chk_v2_status != 'Drop/Withdrawn' & chk_v3_status != 'Drop/Withdrawn' & chk_v4_status != 'Drop/Withdrawn') %>% 
+  filter(is.na(event_v4_complete_dt) & is.na(event_v4_no_show_dt))
+                            
+data_v5_date_problems %>% summarise(total_counts = n())
+
+```
+
+
+### V5 questionnaire Date
+```{r}
+# data_all %>% filter(enrolled) %>% select(v5_date_calc, qdate_visit5, event_v5_quest_completed_dt)
+# data_all %>% filter(enrolled) %>%  filter(as_date(event_v5_quest_completed_dt) >= v5_date_calc) %>% count() # 159
+# data_all %>% filter(enrolled) %>% filter(is.na(event_v5_quest_completed_dt) & is.na(v5_date_calc)) %>% count() # 62
+# data_all %>% filter(enrolled) %>% filter(!is.na(v5_date_calc) & (is.na(qdate_visit5) | is.na(event_v5_quest_completed_dt))) %>% select(ID_RSR, v5_date_calc, qdate_visit5, event_v5_quest_completed_dt)
+# 
+# 
+# 
+# 
+# data_all %>% filter(enrolled) %>%  filter(as_date(event_v4_quest_completed_dt) > as_date(qdate_visit4)) %>% select(ID_RSR, v4_date_calc, qdate_visit4, event_v4_quest_completed_dt) %>% nrow() # 0
+# 
+# data_all %>% filter(enrolled) %>% filter(as_date(event_v5_quest_completed_dt) != qdate_visit5) %>%  select(ID_RSR, v5_date_calc, qdate_visit5, event_v5_quest_completed_dt)
+# 
+# 
+# data_all %>% filter(enrolled) %>% filter(as_date(event_v5_quest_completed_dt) <v5_date_calc| qdate_visit5<v5_date_calc) %>%  select(ID_RSR, v5_date_calc, qdate_visit5, event_v5_quest_completed_dt, v5_quest_date_calc)
+# 
+# event %>% semi_join({data_all %>% filter(enrolled) %>% filter(as_date(event_v5_quest_completed_dt) != qdate_visit5)}, 
+#                     by = 'ID_RSR') %>% View
+
+
+data_all <- data_all %>%
+  mutate(
+    v5_quest_date_calc = case_when(
+      !enrolled ~ NA_Date_,
+       as_date(event_v5_quest_completed_dt) > as_date(qdate_visit5) & as_date(qdate_visit5) >= v5_date_calc ~ as_date(qdate_visit5),
+      T ~ as_date(event_v5_quest_completed_dt)
+    )
+  )
+
+```
+
+# Curating Completion Status and Withdrawal Date (where applicable)
+
+### Add curated v2-v4 dates to the enrolled dataset
+```{r}
+# enrolled <- enrolled %>% left_join(data_all %>% select(ID_RSR, setdiff(names(data_all), names(enrolled))), by = c("ID_RSR"))
+```
+
+```{r}
+enrolled <- enrolled %>% mutate(
+  visits_v2_v3_v4 = case_when(
+    !is.na(v2_date_calc) & !is.na(v3_date_calc) & !is.na(v4_date_calc) ~ "111",
+    !is.na(v2_date_calc) & !is.na(v3_date_calc) & is.na(v4_date_calc) ~ "110",
+    !is.na(v2_date_calc) & is.na(v3_date_calc) & is.na(v4_date_calc) ~ "100",
+    is.na(v2_date_calc) & is.na(v3_date_calc) & is.na(v4_date_calc) ~ "000",
+    !is.na(v2_date_calc) & is.na(v3_date_calc) & !is.na(v4_date_calc) ~ "101",
+    is.na(v2_date_calc) & is.na(v3_date_calc) & !is.na(v4_date_calc) ~ "001",
+    is.na(v2_date_calc) & !is.na(v3_date_calc) & !is.na(v4_date_calc) ~ "011",
+    is.na(v2_date_calc) & !is.na(v3_date_calc) & is.na(v4_date_calc) ~ "010"
+    
+  ),
+  visits_v2_v3_v4_new = paste0(as.numeric(!is.na(v2_date_calc)),as.numeric(!is.na(v3_date_calc)),as.numeric(!is.na(v4_date_calc)),as.numeric(!is.na(v5_date_calc)))
+) 
+
+enrolled %>% count(visits_v2_v3_v4)
+```
+### Calculate withdrawal status and date
+```{r}
+if(F){enrolled %>% filter(withdrew_tracker | event_withdrawn_ind | chk_v2_status == "Drop/Withdrawn" | chk_v3_status == "Drop/Withdrawn" | chk_v4_status == "Drop/Withdrawn") %>% select(ID_RSR, contains("withdrew"), contains("withdraw"), contains("chk_v")) %>% select(-contains("chk_v1")) %>% view()}
+
+enrolled <- enrolled %>% mutate(withdrew_calc = case_when(
+  event_withdrawn_ind ~ T,
+  chk_v2_status == "Drop/Withdrawn" ~ T,
+  chk_v3_status == "Drop/Withdrawn" ~ T,
+  chk_v4_status == "Drop/Withdrawn" ~ T,
+  #withdrew_tracker ~ T,
+  T ~ F
+), withdrew_date_calc = NA_Date_)
+
+if(F){enrolled %>% count(withdrew_calc, visits_v2_v3_v4)}
+
+if(F){enrolled %>% filter(withdrew_calc) %>% count(visits_v2_v3_v4, is.na(withdrew_date_calc))}
+
+
+# Withdrawn Date was recorded in event log, and the data checklist included a status for each visit.
+# Need to find the earliest indication of withdawal from the two sources for each participants
+for (i in which(enrolled$withdrew_calc)){
+  row_i <- enrolled %>% slice(i)
+  recorded_dates <- as_date(row_i$event_withdrawn_dt)
+  if (row_i$chk_v2_status == "Drop/Withdrawn"){
+    if (!is.na(row_i$v2_date_calc)){
+      recorded_dates <- append(recorded_dates, row_i$v2_date_calc)
+    } else {
+      recorded_dates <- append(recorded_dates, row_i$v1_date_calc + days(4))
+    }
+  } else if (row_i$chk_v3_status == "Drop/Withdrawn"){
+    if  (!is.na(row_i$v3_date_calc)){
+      recorded_dates <- append(recorded_dates, row_i$v3_date_calc)
+    } else {
+      recorded_dates <- append(recorded_dates, row_i$v1_date_calc + days(7))
+    }
+  } else if (row_i$chk_v4_status == "Drop/Withdrawn"){
+    if (!is.na(row_i$v4_date_calc)){
+      recorded_dates <- append(recorded_dates, row_i$v4_date_calc)
+    } else {
+      recorded_dates <- append(recorded_dates, row_i$v1_date_calc + days(14))
+    }
+  }
+  enrolled$withdrew_date_calc[i] <- min(recorded_dates, na.rm = TRUE)
+}
+
+if(F){enrolled %>% select(ID_RSR, event_withdrawn_dt, chk_v2_status, chk_v3_status, chk_v4_status, chk_v5_status, v1_date_calc, v2_date_calc, v3_date_calc, v4_date_calc, v5_date_calc) %>% View}
+
+if(F){enrolled %>% count(withdrew_calc, visits_v2_v3_v4)}
+```
+
+```{r}
+
+enrolled <- enrolled %>% 
+    mutate(v3_attend_ind_calc = case_when(v2_attend_ind_calc == "Withdrew" ~ "Withdrew - Previous",
+                                        #BO: add in search for withdrew based on event log date
+                                        #BO: add in review for withdrew based on tracker date
+                                        replace_na(chk_v3_status,"")=="Drop/Withdrawn" ~ "Withdrew",
+                                        #tentatively skp partial completes
+                                        # replace_na(chk_v2_status,"")=="Partial" ~ "Partial",
+                                        replace_na(chk_v3_status,"")=="Complete" | replace_na(qdate_visit3_exist,F) | 
+                                          event_v3_complete_ind| event_v3_quest_completed_ind ~ "Complete",
+                                        T ~ "No Attend"),
+         v3_attend_ind_needsreview = between(qdate_visit3_exist+event_v3_complete_ind+event_v3_quest_completed_ind,1,2),
+         
+         
+         v4_attend_ind_calc = case_when(v3_attend_ind_calc == "Withdrew" | v3_attend_ind_calc == "Withdrew - Previous" ~ "Withdrew - Previous",
+                                        #BO: add in search for withdrew based on event log date
+                                        #BO: add in review for withdrew based on tracker date
+                                        replace_na(chk_v4_status,"")=="Drop/Withdrawn" ~ "Withdrew",
+                                        #tentatively skp partial completes
+                                        # replace_na(chk_v2_status,"")=="Partial" ~ "Partial",
+                                        replace_na(chk_v4_status,"")=="Complete" | replace_na(qdate_visit4_exist,F) | 
+                                          event_v4_complete_ind| event_v4_quest_completed_ind ~ "Complete",
+                                        T ~ "No Attend"),
+         v4_attend_ind_needsreview = between(qdate_visit4_exist+event_v4_complete_ind+event_v4_quest_completed_ind,1,2)
+  )
+
+enrolled %>% count(visits_v2_v3_v4, v4_attend_ind_calc)
+
+```
+
+
+
+# Outputs
+
+```{r}
+crswlk_export <- data_all %>% select(ID_RSR, ID_enrolled, participant_id, eligible_scr, enrolled)
+saveRDS(object=crswlk_export, file = file.path(path_ontrack_visit_outputs, "utah_crosswalk.rds"))
+write_dta(data=crswlk_export, path = file.path(path_ontrack_visit_outputs, "utah_crosswalk.dta"))
+
+
+data_all <- data_all %>% full_join(enrolled %>% select(ID_RSR, setdiff(names(enrolled),names(data_all))), by = c("ID_RSR"))
+saveRDS(object = data_all, file = file.path(path_ontrack_visit_outputs, "utah_data_all.rds"))
+write_dta(data= data_all, path = file.path(path_ontrack_visit_outputs, "utah_data_all.dta")) # need shorter names
+
+saveRDS(object = chk, file = file.path(path_ontrack_visit_outputs, "utah_data_checklist_clean.rds"))
+write_dta(data = chk, path =  file.path(path_ontrack_visit_outputs, "utah_data_checklist_clean.dta")) # need shorter names
+
+saveRDS(object = quest, file = file.path(path_ontrack_visit_outputs, "utah_questionnaire.rds"))
+write_dta(data = quest, path = file.path(path_ontrack_visit_outputs, "utah_questionnaire.dta"))
+
+saveRDS(object = scr, file = file.path(path_ontrack_visit_outputs, "utah_screener.rds"))
+write_dta(data = scr, path = file.path(path_ontrack_visit_outputs, "utah_screener.dta"))
+
+saveRDS(object = event_wide, file = file.path(path_ontrack_visit_outputs, "utah_event_clean_wide.rds"))
+write_dta(data = event_wide, path = file.path(path_ontrack_visit_outputs, "utah_event_clean_wide.dta"))
+
+visit_comments <- data_all %>% filter(enrolled) %>%  select(ID_RSR, ID_enrolled, participant_id, contains(c("comment", "note")))
+saveRDS(object = visit_comments, file = file.path(path_ontrack_visit_outputs, "utah_visit_comments.rds"))
+write_dta(data = visit_comments, path = file.path(path_ontrack_visit_outputs, "utah_visit_comments.dta"))
+
+```
+
+

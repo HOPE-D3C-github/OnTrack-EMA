@@ -53,7 +53,3 @@ vignettes/*.pdf
 
 # html files
 *.html
-
-# RMD files (except setup-repo.Rmd)
-*.Rmd
-!setup-repo.Rmd

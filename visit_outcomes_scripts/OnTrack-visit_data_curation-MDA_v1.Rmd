@@ -1,0 +1,469 @@
+---
+title: "OnTrack Pre-Curated: Investigate Raw MDA Data"
+author: "Tony Banks"
+date: '2022-07-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(haven)
+library(dplyr)
+library(stringr)
+library(data.table)
+library(openxlsx)
+library(tidyr)
+library(lubridate)
+library(purrr)
+library(gtools)
+library(scales)
+library(readxl)
+library(knitr)
+library(kableExtra)
+library(DT)
+library(Hmisc)
+library(haven)
+
+source("../paths.R")
+
+prefix_func <- function(colname, prefix){
+  if(colname %in% c("Grafana.UserName", "PPT.ID", "SubjectID", "ses_integer", "cc_indicator", "ContactID", "ID_enrolled", "participant_id")){
+    return(colname)
+  } else {
+    return(paste(prefix, colname, sep = "_"))
+  }
+}
+
+mydt <- function(...){datatable(...,rownames=F, extensions = 'Buttons', options = list(lengthMenu = c(10,20,50,100,200),
+                                                                                       autoWidth=T,
+    dom = 'lBrtip',
+    buttons = list(list(extend = 'colvis'),"copy","csv")
+  ),
+            filter = list(
+  position = 'top', clear = FALSE
+            ))}
+
+```
+
+# Prep Data Sources from MDA
+
+## Excel Tracker - used by study staff
+```{r}
+tracker <- read.xlsx(file.path(path_ontrack_visit_inputs, "Grafana Accts submitted to Utah by ALG- Coordinator USE ONLY 01.14.2022.xlsx"))
+
+tracker_v2 <- tracker 
+# add prefix to all unique variables
+colnames(tracker_v2) <- colnames(tracker) %>% map(function(.) prefix_func(., "tracker"))
+
+# create a cleaned v1 and v4 date
+tracker_v3 <- tracker_v2 %>% 
+  mutate(ses_integer = as.integer(str_split(str_remove(Grafana.UserName, "ses_"), " ", simplify = T)[,1]),
+         .before = Grafana.UserName) %>% 
+  mutate(in_tracker = T) %>% 
+  mutate(tracker_date_v1 = ymd(str_remove(tracker_V1_YYYYMMDD, pattern = "V1_")),
+         tracker_date_v4 = ymd(str_remove(tracker_V4_YYYYMMDD, pattern = "V4_")),
+         .after = tracker_V4_YYYYMMDD) %>% 
+  rename(SubjectID = PPT.ID)
+
+
+# add a comment to supplement an NA date - can also use the comments tracker_Comments variable
+tracker_v4 <- tracker_v3 %>% 
+  mutate(
+    tracker_date_v1_comment = case_when(
+      is.na(tracker_date_v1) ~ str_remove(tracker_V1_YYYYMMDD, "V1_")
+    ), .after = tracker_date_v1) %>% 
+  mutate(
+    tracker_date_v4_comment = case_when(
+      is.na(tracker_date_v4) ~ str_remove(tracker_V4_YYYYMMDD, "V4_")
+    ), .after = tracker_date_v4)
+
+tracker_v5 <- tracker_v4 %>% filter(!is.na(SubjectID)) %>% select(-tracker_Password)
+
+tracker_v6 <- tracker_v5 %>% 
+  rename(ID_enrolled = Grafana.UserName,
+         participant_id = ses_integer) %>% 
+  mutate(participant_id = paste0("ses_", participant_id))
+
+tracker_clean <- tracker_v6
+
+remove(tracker, tracker_v2, tracker_v3, tracker_v4, tracker_v5, tracker_v6)
+
+```
+
+## EMA Subfolders
+```{r}
+ema_subfolder_names_all <- list.files(path_ontrack_cc2_input_data)
+# remove files (retain only folders) and remove folders for test participants
+subset_indices <- replace_na(str_split_fixed(ema_subfolder_names_all, "_", n = 2)[,1] == "ses" & !str_detect(ema_subfolder_names_all, "_test_"))
+ema_subfolder_names <- ema_subfolder_names_all[subset_indices]
+
+ema_folders_clean <- data.frame(#ses_integer = as.integer(str_remove(ema_subfolder_names, "ses_")), 
+                                participant_id = ema_subfolder_names, in_ema_folders = T) 
+
+remove(ema_subfolder_names_all, subset_indices, ema_subfolder_names)
+```
+
+
+
+
+## MDA SAS Files
+
+* Previously converted the SAS files to a list of tibbles
+```{r}
+list_of_MDA_sas_files <- readRDS(file.path(path_ontrack_visit_staged, "list_of_all_sas_data_from_MDA.Rds"))
+
+MDA_sas_files_summary_df <- data.frame(index = integer(), name = character(), n_rows = integer(), n_cols = integer())
+for (i in 1:length(list_of_MDA_sas_files)){
+  #print(paste0("Index: ",i, ". Name: ", names(list_of_MDA_sas_files[i]), ". Rows: ", dim(list_of_MDA_sas_files[[i]])[1], ". Cols: ", dim(list_of_MDA_sas_files[[i]])[2]))
+  MDA_sas_files_summary_df <- MDA_sas_files_summary_df %>% add_row(index = i, name = names(list_of_MDA_sas_files[i]), n_rows = dim(list_of_MDA_sas_files[[i]])[1], n_cols = dim(list_of_MDA_sas_files[[i]])[2])
+}
+remove(i)
+MDA_sas_files_summary_df <- MDA_sas_files_summary_df %>% arrange(desc(n_rows))
+```
+
+#### Event
+```{r}
+event <- list_of_MDA_sas_files[["tblevents"]] %>% relocate(SubjectID, .before = everything())
+
+all(event$EventDate == event$EventTime)
+
+# remove variables that are redundant, NA / same value for all rows, or not likely useful to carryforward
+event_clean <- event %>% 
+  select(-EventTime, -EventSecondary, -OldEventID, -ContactGroupId, -NextTryDate, -Project, -StaffID, -ActualDate, -VisitType, -EnteredBy, -UniqueIdent) %>% 
+  mutate(SubjectID = as.character(SubjectID))
+
+event_clean_wlabels <- event_clean %>% 
+  left_join(y = list_of_MDA_sas_files[["rtbleventstatus"]],
+            by = c("EventStatusID" = "EventStatusId")) %>% 
+  relocate(EventStatus, .after = EventStatusID) %>% 
+  left_join(y = list_of_MDA_sas_files[["rtblcontacttype"]],
+            by = c("ContactTypeId")) %>% 
+  relocate(ContactType, .after = ContactTypeId) %>% 
+  select(-EventStatusID, -ContactTypeId, -Status)
+
+
+event_clean_wide <- event_clean_wlabels %>% 
+  arrange(EventNo) %>% 
+  pivot_wider(
+    id_cols = SubjectID,
+    names_from = EventNo,
+    names_glue = "event_v{EventNo}_{.value}",
+    values_from = colnames(event_clean_wlabels)[!colnames(event_clean_wlabels) %in% c("SubjectID", "EventNo")]
+  ) %>% 
+  mutate(in_event = T) 
+
+remove(event, event_clean)
+```
+
+#### Subject Status
+```{r}
+status <- list_of_MDA_sas_files[["tblsubjectstatus"]] %>% relocate(SubjectID, .before = everything())
+
+colnames(status) <- colnames(status) %>% map(function(.) prefix_func(., "status"))
+
+status <- status %>% 
+  mutate(SubjectID = as.character(SubjectID), 
+         in_subjectstatus = TRUE)
+
+if(T){status %>% count(status_StudyStatus, status_SecondaryStatus)}
+
+crswlk <- status %>% select(SubjectID, ContactID)
+```
+
+```{r}
+progressnotes <- crswlk %>% 
+  full_join(y = list_of_MDA_sas_files[["tblprogressnotes"]],
+            by = c("ContactID")) %>% 
+  arrange(SubjectID, EventNo, NoteDate)
+
+```
+
+#### Randomization
+```{r}
+randomization <- list_of_MDA_sas_files[["tblrandomization"]]
+randomization_clean <- randomization %>% 
+  select(-Name, -Method, -ActiveRandom, -CreateBy) %>% 
+  rename(SubjectID = SubjectId) %>% 
+  mutate(SubjectID = as.character(SubjectID))
+
+colnames(randomization_clean) <- colnames(randomization_clean) %>% map(function(.) prefix_func(., "rand"))
+
+randomization_clean <- randomization_clean %>% mutate(in_rand = T)
+
+remove(randomization)
+```
+
+## Load the EMA first and last dates
+```{r}
+ema_first_last_dates <- readRDS(file = file.path(path_ontrack_visit_staged, "ema_first_last_dates.rds")) %>% 
+  filter(cc_indicator == "2") #%>% 
+  #rename(Grafana.UserName = participant_id) %>% 
+  #mutate(ses_integer = as.integer(str_remove(Grafana.UserName, "ses_")), .after = Grafana.UserName) %>% 
+  #arrange(ses_integer) 
+
+colnames(ema_first_last_dates) <- colnames(ema_first_last_dates) %>% map(function(.) prefix_func(., "ema_dates"))
+
+ema_first_last_dates <- ema_first_last_dates %>% 
+  mutate(in_ematimes = TRUE)
+
+```
+
+#### Questionairre
+```{r}
+#quest <- read.xlsx(file.path(path_ontrack_mda_raw, "OnTrack_Qualtrics_2022_08_30.xlsx"))
+quest_raw <- read.xlsx(file.path(path_ontrack_mda_raw, "OnTrack_Qualtrics_2022_08_30_clean.xlsx")) 
+
+colnames(quest_raw) = make.names(colnames(quest_raw), unique = T)
+
+quest_raw <- quest_raw %>% select(-StartDate_orig, -EndDate_orig, -RecordedDate_orig)
+
+quest_labels <- quest_raw[1,]
+quest <- quest_raw[2:nrow(quest_raw),] %>% 
+  mutate(across(.cols = c(StartDate, EndDate, RecordedDate), .fns = lubridate::mdy_hms))
+
+remove(quest_raw)
+
+
+quest %>%
+    dplyr::group_by(SubjectID_, Visit_) %>%
+    dplyr::summarise(StartDate, Finished, n_total = dplyr::n(), .groups = "drop") %>%
+    dplyr::filter(n_total > 1L)
+
+
+# 18 cases of repeated questionnaire per event per participant. Mixed completion results. Algorithm below reduces to max 1 per participant. Max 2 observed
+quest_dates <- quest %>% 
+  arrange(StartDate) %>% 
+  group_by(SubjectID_, Visit_) %>% 
+  mutate(keep_from_dup = case_when(
+    n() == 1 ~ TRUE,  # If not repeated, then keep the entry
+    row_number() == n() & Finished == "TRUE" ~ TRUE, # If multiple, and the chronologically last was completed, use that one
+    row_number() == n() & Finished != "TRUE" & any(Finished == "TRUE") ~ FALSE, # If multiple, and the chronologically last was not completed, but the other was, then don't keep the chronologically last one
+    row_number() != n() & Finished == "TRUE" & !all(Finished == "TRUE") ~ TRUE, # If multiple, and the chronologically last was not completed, but the other was, then keep the other
+    row_number() == n() & Finished != "TRUE" & !any(Finished == "TRUE") ~ TRUE, # If multiple and none completed, keep the chronologically last. 
+    #Could modify for the most complete!
+    row_number() != n() & Finished != "TRUE" & !any(Finished == "TRUE") ~ FALSE, # Opposite of the above
+    T ~ FALSE
+  )) %>% 
+  filter(keep_from_dup) %>% 
+  ungroup() %>% 
+  arrange(Visit_) %>% 
+  pivot_wider(
+    id_cols = SubjectID_,
+    names_from = Visit_,
+    names_glue = "{Visit_}_{.value}",
+    values_from = c(EndDate, Finished)
+  ) %>% 
+  rename(SubjectID = SubjectID_) 
+
+colnames(quest_dates) <- colnames(quest_dates) %>% map(function(.) prefix_func(., "quest"))
+
+quest_dates <- quest_dates %>% 
+  mutate(in_quest = T)
+
+```
+
+
+## Demographics
+```{r}
+demog <- list_of_MDA_sas_files[["tbldemographics"]] %>% rename(SubjectID = subjectid) %>% mutate(SubjectID = as.character(SubjectID))
+
+colnames(demog) <- colnames(demog) %>% map(function(.) prefix_func(., "demog"))
+```
+
+
+
+
+## MDA Withdraw Log
+```{r}
+withdraw_log <- read_excel(path = file.path(path_ontrack_mda_raw, "withdraw log_clean.xlsx")) %>% 
+  mutate(withdrawn_date = mdy(str_remove(Withdrawn_date_text, 'withdrew on ')),
+         Subject_ID = as.character(Subject_ID)) %>% select(Subject_ID, withdrawn_date)
+
+
+```
+
+
+
+
+
+
+## Combine the above 
+```{r}
+data_all <- status %>% 
+  full_join(y = randomization_clean,
+            by = c("SubjectID")) %>% 
+  full_join(y = event_clean_wide,
+            by = c("SubjectID")) %>% 
+  full_join(y = tracker_clean, 
+            by = c("SubjectID")) %>% 
+  full_join(y = ema_first_last_dates,
+            by = "participant_id") %>% 
+  full_join(y = demog,
+            by= c("SubjectID")) %>% 
+  full_join(y = quest_dates,
+            by = c("SubjectID")) %>%
+  full_join(y = withdraw_log %>% mutate(withdrew = T),
+            by = c("SubjectID" = "Subject_ID"))%>% 
+  mutate(across(where(is.logical), ~replace_na(.,F))) %>%
+  mutate(enrolled = status_StudyStatus == "Randomized/Baseline",
+         completed_study = case_when(
+           enrolled & status_SecondaryStatus == 'Completed Study' ~ T,
+           enrolled & status_SecondaryStatus != 'Completed Study' ~ F)
+         )  
+```
+
+
+
+# Reviewing Visit Dates
+
+## Visit 1 (V1)
++ SubjectID 530123: Conflicting v1 dates. The other visit dates from source "Event" coincide with the timeline of event_v1_EventDate, as does the first ema_date. 
+  Also, the tracker v4 date coincides with the v4 from "Event". 
+  Resolution: use event_v1_EventDate
++ SubjectID 530194: Conflicting v1 dates. The other visit dates from source "Event" coincide with the timeline of event_v1_EventDate, as does the first ema_date. 
+  The tracker v4 date does not coincide with the v4 from "Event". Appears the participant's schedule was delayed by 1 week and the tracker was not updated.
+  Resolution: use event_v1_EventDate
+```{r}
+
+data_all %>% select(ID_enrolled, SubjectID, tracker_date_v1, event_v1_EventDate, ema_dates_hrts_AmericaChicago_first, quest_Baseline_EndDate, event_v1_EventStatus, tracker_date_v1_comment, event_v1_Comments) %>% 
+  mutate(event_v1_EventDate = as_date(event_v1_EventDate),
+         ema_dates_hrts_AmericaChicago_first = as_date(ema_dates_hrts_AmericaChicago_first)) %>% 
+  filter(tracker_date_v1 != event_v1_EventDate)
+
+if(F){
+  data_all %>% filter(SubjectID %in% c("530123", "530194")) %>% View()
+}
+
+data_all <- data_all %>% 
+  mutate(
+    v1_date_curated = case_when(
+      SubjectID %in% c("530123", "530194") ~ as_date(event_v1_EventDate),
+      T ~ as_date(event_v1_EventDate)
+      )
+    )
+
+```
+
+## Visit 4 (V4)
+### Part 1: tracker and event discrepencies
++ SubjectID 530147: tracker_date_v4 lines up with study design timeline, but ema_dates_last coincides with event_v4_EventDate. "tblprogressnotes" indicates the v4 visit occurred on 3/11/2021
+  Resolution: Use tracker_date_v4 (3/11/2021)
++ SubjectID 530194: Patient had inconsistent v1 date in tracker as well. 
+  Resolution: Use event_v4_EventDate
++ SubjectID 530226: tracker_date_v4 lines up with study design timeline, but ema_dates_last coincides with event_v4_EventDate. "tblprogressnotes" indicates the v4 visit occurred on 6/7/2021
+  Resolution: Use event_v4_EventDate (6/7/2021)
+```{r}
+data_all %>% select(ID_enrolled, SubjectID, v1_date_curated, tracker_date_v4, event_v4_EventDate, ema_dates_hrts_AmericaChicago_last, `quest_Visit 4_EndDate`, event_v4_EventStatus, tracker_date_v4_comment, event_v4_Comments) %>% 
+  mutate(v1_date_curated = as_date(v1_date_curated),
+         event_v4_EventDate = as_date(event_v4_EventDate),
+         ema_dates_hrts_AmericaChicago_last = as_date(ema_dates_hrts_AmericaChicago_last)) %>% 
+  filter(tracker_date_v4 != event_v4_EventDate) #| (is.na(tracker_date_v4) & !is.na(event_v4_EventDate))| (!is.na(tracker_date_v4) & is.na(event_v4_EventDate)))
+
+
+
+if(F){
+  data_all %>% filter(SubjectID %in% c("530147", "530226")) %>% View()
+  data_all %>% filter(SubjectID == "530226") %>% View()
+  
+  
+}
+
+data_all <- data_all %>% 
+  mutate(
+    v4_date_curated = case_when(
+      SubjectID == "530226" ~ tracker_date_v4,
+      SubjectID %in% c("530147", "530194") ~ as_date(event_v4_EventDate),
+      T ~ as_date(event_v4_EventDate)
+    )
+  )
+
+
+```
+
+###Part 2:
+SubjectID 530058: "tblprogressnotes" documents v4 was a no-show
+All others: tracker comments document reason for no v4
+Resolution (all): v4_date_curated -> "NA"
+```{r}
+(inv_v4_p2 <-  data_all %>% select(ID_enrolled, SubjectID, v1_date_curated, tracker_date_v4, event_v4_EventDate, ema_dates_hrts_AmericaChicago_last, tracker_date_v4_comment, event_v4_EventStatus, event_v4_Comments) %>% 
+  mutate(v1_date_curated = as_date(v1_date_curated),
+         event_v4_EventDate = as_date(event_v4_EventDate),
+         ema_dates_hrts_AmericaChicago_last = as_date(ema_dates_hrts_AmericaChicago_last)) %>% 
+  filter((is.na(tracker_date_v4) & !is.na(event_v4_EventDate))| (!is.na(tracker_date_v4) & is.na(event_v4_EventDate))) %>% 
+   arrange(tracker_date_v4_comment))
+
+
+data_all <- data_all %>% mutate(
+  v4_date_curated = case_when(
+    tracker_date_v4_comment %in% c("cancelled", "CANCELLED", "NO SHOW to V4", "NS") ~ NA_Date_,
+    T~v4_date_curated
+  )
+)
+
+(inv_v4_p2B <-  data_all %>% select(ID_enrolled, SubjectID, tracker_date_v4, event_v4_EventDate, ema_dates_hrts_AmericaChicago_last, tracker_Comments, tracker_date_v4_comment, withdrawn_date, event_v4_Comments, v1_date_curated, v4_date_curated) %>% 
+  mutate(v1_date_curated = as_date(v1_date_curated),
+         event_v4_EventDate = as_date(event_v4_EventDate),
+         ema_dates_hrts_AmericaChicago_last = as_date(ema_dates_hrts_AmericaChicago_last)) %>% 
+  filter((is.na(tracker_date_v4) & !is.na(event_v4_EventDate))| (!is.na(tracker_date_v4) & is.na(event_v4_EventDate))) %>% 
+  filter(!is.na(v4_date_curated)))
+
+data_all <- data_all %>% 
+  mutate(v4_date_curated = case_when(
+    is.na(tracker_date_v4) & !is.na(event_v4_EventDate) ~ NA_Date_,
+    T ~v4_date_curated
+  ))
+
+```
+
+## Only count enrolled participants as those who have EMA data and completed the v1 visit
+
+```{r}
+data_all <- data_all %>% 
+  mutate(
+    enrolled = case_when(
+      enrolled & !in_ematimes ~ FALSE,       # considered enrolled based on the earlier definition, but don't have EMA data
+      enrolled & is.na(v1_date_curated) ~ FALSE,   # considered enrolled based on the earlier definition, but don't have a v1_date_curated
+      T ~ enrolled
+    )
+  )
+
+```
+
+
+```{r}
+# ID_enrolled ses_118 ('530079') was assigned the same grafana account as ses_119 ('530067'). Therefore their data was mingled and could not be parsed. Both will be removed
+data_all <- data_all %>% 
+  mutate(enrolled = case_when(
+    SubjectID %in% c('530067', '530079') ~ FALSE,
+    is.na(enrolled) ~ FALSE,
+    T ~ enrolled
+  ))
+
+```
+
+
+## Prep outputs
+```{r}
+data_all <- data_all %>% rename(ID_MDA = SubjectID,
+                                cohort = rand_GroupAssigned)
+
+enrolled_mda <- data_all %>% filter(enrolled) %>% mutate(cc_indicator = 2)
+data_all_mda <- data_all
+
+dat_master_mda <- enrolled_mda %>% 
+  select(ID_MDA, ID_enrolled, participant_id, enrolled, withdrew, v1_date_curated, event_v1_EventStatus, event_v1_ContactType, event_v2_EventDate, event_v2_EventStatus, event_v2_ContactType, event_v3_EventDate, event_v3_EventStatus, event_v3_ContactType, v4_date_curated, event_v4_EventStatus, event_v4_ContactType) 
+
+if(F){dat_master_mda %>% group_by(ID_MDA) %>% summarise(dates_synchronous = v1_date_curated < event_v2_EventDate & event_v2_EventDate < event_v3_EventDate & event_v3_EventDate < v4_date_curated) %>% View}
+
+if(F){dat_master_mda %>% group_by(ID_MDA) %>% summarise(dates_synchronous = v1_date_curated < event_v2_EventDate & event_v2_EventDate < event_v3_EventDate ) %>% View}
+
+
+saveRDS(data_all_mda,
+        file = file.path(path_ontrack_visit_outputs, "data_all_mda.RDS"))
+
+saveRDS(enrolled_mda,
+        file = file.path(path_ontrack_visit_outputs, "enrolled_mda.RDS"))
+```

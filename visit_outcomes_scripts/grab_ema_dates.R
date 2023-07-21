@@ -45,4 +45,3 @@ ema_times <- bind_rows(cc1_times,cc2_times) %>%
   )
 
 saveRDS(object = ema_times, file = file.path(path_ontrack_visit_staged, "ema_first_last_dates.rds"))
-

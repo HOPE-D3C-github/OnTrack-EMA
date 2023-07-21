@@ -446,6 +446,11 @@ ids_cc1 <- ema_ids_cc1 %>%
                            ID_RSR = c("126748", "129686", "131060", "139360")),
             by = c("ID_RSR"))
 
+ids_cc1 <- ids_cc1 %>% 
+  mutate(ID_RSR = case_when(participant_id == '129329_R71' ~ '129320',
+         T ~ ID_RSR),
+         ID_enrolled = case_when(participant_id == '129329_R71' ~ "4101",
+           T ~ ID_enrolled))
 
 ###### make/redo crosswalk 
 cwalk_all <- rbind(ids_cc1, crswlk_trk_cc2) %>% ungroup()
@@ -749,7 +754,12 @@ data_all <- data_all %>%
   mutate(enrolled = case_when(
     pilot_participant ~ F,
     test_participant ~ F,
-    v1_attend_calc=="Complete" & status_calc_beganema & ID_RSR != "140264" ~ T, # ID_RSR 140264 withdrew during V1 
+    ID_RSR %in% c("140264", '141114') ~ F,  # these participants withdrew during v1
+    
+    
+    
+    v1_attend_calc=="Complete" # &status_calc_beganema &  # 7/21/2023 update: new enrollment definition does not require them to have 1+ delivered EMA
+       ~ T, # ID_RSR 140264 withdrew during V1 
     T~F))
 
 enrolled <- data_all %>% 

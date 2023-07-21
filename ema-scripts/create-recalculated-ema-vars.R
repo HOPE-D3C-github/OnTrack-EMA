@@ -16,6 +16,7 @@ source("paths.R")
 
 load(file = file.path(path_ontrack_ema_staged, "combined_ema_data.RData"))
 all_ema_data <- all_ema_data %>% arrange(ID_enrolled, study_day_int, block, end_hrts_local)
+dat_master <- readRDS(file.path(path_ontrack_ema_staged, "masterlist_updated.RDS"))
 ##################################################################
 # Update the undelivered EMAs so they have with_any_response = 0
 ##################################################################
@@ -275,6 +276,21 @@ all_ema_data_D1_all_delivered <- all_ema_data_cleaned %>%
   relocate(with_any_response, .after = ema_type) %>% 
   relocate(timezone_local, begin_hrts_local, end_hrts_local, .before = ema_type)
 
+# ---------------------------------------------------------------
+# Update undelivered reason for participants without any EMA data
+# ---------------------------------------------------------------
+all_ema_data_D1_all_delivered <- all_ema_data_D1_all_delivered %>% 
+  left_join(dat_master %>% select(ID_enrolled, in_ematimes),
+            by = "ID_enrolled") %>% 
+  mutate(status = case_when(
+    !in_ematimes ~ "UNDELIVERED-PT_NO_EMA_ENTIRE_STUDY",
+    T ~ status
+  )) %>% 
+  select(-in_ematimes)
+
+# ---------------------------------------------------------------
+# Save data
+# ---------------------------------------------------------------
 save(all_ema_data_D1_all_delivered,conditions_applied_simple, unedited_and_clean_ema_vars_dat,
      file = file.path(path_ontrack_ema_staged, "all_ema_data_D1_all_delivered.RData"))
 

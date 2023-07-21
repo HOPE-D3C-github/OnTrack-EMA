@@ -27,6 +27,7 @@ ema_subfolder_names_all <- list.files(path_ontrack_cc2_input_data)
 subset_indices <- replace_na(str_split_fixed(ema_subfolder_names_all, "_", n = 2)[,1] == "ses" & !str_detect(ema_subfolder_names_all, "_test_"))
 ema_subfolder_names <- ema_subfolder_names_all[subset_indices]
 ids_cc2 <- mixedsort(ema_subfolder_names)
+ids_cc2 <- ids_cc2[-c(which(ids_cc2 == "ses_119"))]  # Removing "ses_119" from the list - this grafana id was linked to two participants at the same time and their data is unreparably comingled
 remove(ema_subfolder_names_all, subset_indices, ema_subfolder_names)
 
 # -----------------------------------------------------------------------------

@@ -25,8 +25,8 @@ if(development){
   path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/outputs - data managers only (temp location)")
   path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/outputs - data for analysis (temp location)")
 } else {
-  path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Curated Data - available upon request/EMA/Release v1.0/output - 4 data managers")
-  path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Curated Data/EMA/Release v1.0/data for analysis")
+  path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Curated Data - available upon request/EMA/Release v1.1/output - 4 data managers")
+  path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Curated Data/EMA/Release v1.1/data for analysis")
 }
 
 path_ontrack_quest_output_4_analysis <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/Questionnaire Data/outputs - data managers only (temp location)")

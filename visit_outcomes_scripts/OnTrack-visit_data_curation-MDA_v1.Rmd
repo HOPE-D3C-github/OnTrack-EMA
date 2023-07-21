@@ -341,7 +341,9 @@ data_all <- data_all %>%
   mutate(
     v1_date_curated = case_when(
       SubjectID %in% c("530123", "530194") ~ as_date(event_v1_EventDate),
-      T ~ as_date(event_v1_EventDate)
+      SubjectID == '530070' ~ NA_POSIXct_,     # This participant withdrew on the date of V1
+      event_v1_EventStatus == "Completed" ~ as_date(event_v1_EventDate),
+      T ~ NA_POSIXct_
       )
     )
 
@@ -418,32 +420,41 @@ data_all <- data_all %>%
 
 ```
 
-## Only count enrolled participants as those who have EMA data and completed the v1 visit
-
+## Only count enrolled participants as those who have completed the v1 visit
 ```{r}
 data_all <- data_all %>% 
   mutate(
     enrolled = case_when(
-      enrolled & !in_ematimes ~ FALSE,       # considered enrolled based on the earlier definition, but don't have EMA data
-      enrolled & is.na(v1_date_curated) ~ FALSE,   # considered enrolled based on the earlier definition, but don't have a v1_date_curated
+      # enrolled & !in_ematimes ~ FALSE,       # considered enrolled based on the earlier definition, but don't have EMA data. Updated July 2023 - Removed the restriction of being in ematimes
+      enrolled & is.na(v1_date_curated) ~ FALSE,   # considered enrolled based on the earlier definition, but don't have a v1_date_curated (completed V1)
       T ~ enrolled
     )
   )
 
 ```
 
-
+## Remove participants who are in the EMA dataset but not any MDA visit data - these are UofU CC2 participants
 ```{r}
-# ID_enrolled ses_118 ('530079') was assigned the same grafana account as ses_119 ('530067'). Therefore their data was mingled and could not be parsed. Both will be removed
 data_all <- data_all %>% 
-  mutate(enrolled = case_when(
-    SubjectID %in% c('530067', '530079') ~ FALSE,
-    is.na(enrolled) ~ FALSE,
-    T ~ enrolled
-  ))
+  filter(!(in_ematimes & is.na(v1_date_curated)))
+
 
 ```
 
+## ID_enrolled ses_118 ('530079') was assigned the same grafana account as ses_119 ('530067'). Therefore their data was mingled and could not be parsed. Both will be removed from ema data, but kept in with updated definition of enrolled
+```{r}
+data_all <- data_all %>% 
+  mutate(enrolled = case_when(
+    SubjectID %in% c('530067', '530079') ~ TRUE,
+    is.na(enrolled) ~ FALSE,
+    T ~ enrolled
+  ),
+  ID_enrolled = case_when(
+    participant_id == 'ses_118' ~ 'ses_118', #This participant's ID_enrolled did not conform to the regular convention, so updating it here. They have no usable EMA data per note above
+    T ~ ID_enrolled
+  ))
+
+```
 
 ## Prep outputs
 ```{r}

@@ -451,7 +451,7 @@ updated_for_start_of_phone_2 <- block_level_backbone %>%
       ID_enrolled == '4177' & study_day_int == 13
     ) |
     (
-      ID_enrolled == '4179' & study_day_int == 8
+      ID_enrolled == '4179' & study_day_int == 8 & block %in% c("2", "3", "4")
     ) |
     (
       ID_enrolled == '4181' & study_day_int == 8 & block %in% c("3", "4")
@@ -837,7 +837,8 @@ block_level_ema_cc2 <- block_level_ema_cc2 %>% select(-i.timezone_local, -delive
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #   Step 6: Update phone_int_ema for Days without a Day Start from NA to the corresponding phone_int ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-block_level_ema_cc1 <- block_level_ema_cc1 %>% 
+block_level_ema_cc1 <- block_level_ema_cc1 %>% select(-start_phone_2_hrts_local) %>% 
+  left_join(y = dat_master %>% select(ID_enrolled, start_phone_2_hrts_local), by = "ID_enrolled") %>% 
   mutate(start_phone_2_date = as_date(start_phone_2_hrts_local),
          phone_int_ema = case_when(
           !is.na(phone_int_ema) ~ phone_int_ema,
@@ -849,7 +850,8 @@ block_level_ema_cc1 <- block_level_ema_cc1 %>%
         )) %>% 
   select(-start_phone_2_date, -start_phone_2_hrts_local)
 
-block_level_ema_cc2 <- block_level_ema_cc2 %>% 
+block_level_ema_cc2 <- block_level_ema_cc2 %>% select(-start_phone_2_hrts_local) %>% 
+  left_join(y = dat_master %>% select(ID_enrolled, start_phone_2_hrts_local), by = "ID_enrolled") %>% 
   mutate(start_phone_2_date = as_date(start_phone_2_hrts_local),
          phone_int_ema = case_when(
           !is.na(phone_int_ema) ~ phone_int_ema,

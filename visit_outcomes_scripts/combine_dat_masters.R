@@ -15,7 +15,7 @@ library(purrr)
 source("paths.R")
 
 dat_master_mda <- readRDS(file.path(path_ontrack_visit_outputs, "enrolled_mda.RDS")) %>% 
-  select(ID_MDA, participant_id, ID_enrolled, cc_indicator, cohort, in_ematimes, withdrew, withdrawn_date, v1_date_curated,
+  select(ID_MDA, participant_id, participant_id_2, ID_enrolled, cc_indicator, cohort, in_ematimes, withdrew, withdrawn_date, v1_date_curated,
          event_v1_EventStatus, event_v2_EventDate, event_v2_EventStatus,event_v3_EventDate, 
          event_v3_EventStatus, v4_date_curated, event_v4_EventStatus) %>% 
   rename(withdrew_date = withdrawn_date,
@@ -27,13 +27,13 @@ dat_master_mda <- readRDS(file.path(path_ontrack_visit_outputs, "enrolled_mda.RD
          v3_attend = event_v3_EventStatus,
          v4_date = v4_date_curated,
          v4_attend = event_v4_EventStatus) %>% 
-  mutate(participant_id_2 = case_when(
-    ID_MDA == '530079' ~ 'ses_119',
-    ID_MDA == "530351" ~ "ses_248",
-    T ~ NA_character_
-  ), .after = participant_id) %>% 
-  filter(!(ID_MDA == "530351" & participant_id == "ses_248")) %>% 
-  mutate(ID_RSR = NA_character_, .before = everything()) %>% 
+  # mutate(participant_id_2 = case_when(
+  #   ID_MDA == '530079' ~ 'ses_119',
+  #   ID_MDA == "530351" ~ "ses_248",
+  #   T ~ NA_character_
+  # ), .after = participant_id) %>% 
+  # filter(!(ID_MDA == "530351" & participant_id == "ses_248")) %>% 
+  mutate(ID_RSR = NA_character_, .before = everything()) %>%
   mutate(enrollment_site = 'MDA', .before = everything())
 
 dat_master_utah <- readRDS(file = file.path(path_ontrack_visit_outputs, "utah_data_all.rds")) %>% 

@@ -35,6 +35,7 @@ library(haven)
 library(DBI)
 library(dbplyr)
 library(collateral)
+library(readr)
 
 source("../paths.R")
 
@@ -755,12 +756,20 @@ data_all <- data_all %>%
     pilot_participant ~ F,
     test_participant ~ F,
     ID_RSR %in% c("140264", '141114') ~ F,  # these participants withdrew during v1
-    
-    
-    
     v1_attend_calc=="Complete" # &status_calc_beganema &  # 7/21/2023 update: new enrollment definition does not require them to have 1+ delivered EMA
        ~ T, # ID_RSR 140264 withdrew during V1 
-    T~F))
+    T~F)) %>% 
+  mutate(cc_indicator = case_when(
+    enrolled & is.na(ID_enrolled) ~ "1",
+    T ~ cc_indicator
+  )) %>% 
+  mutate(ID_enrolled = case_when(  # Add in an ID_enrolled for "enrolled" participants who were not assigned a Grafana ID
+    enrolled & is.na(ID_enrolled) ~ ID_RSR,
+    T ~ ID_enrolled
+  ), 
+  participant_id = case_when(
+    enrolled & is.na(participant_id) ~ ID_RSR,
+    T ~ participant_id))
 
 enrolled <- data_all %>% 
   #define enrollment as completing V1 and beginning EMA
@@ -1276,27 +1285,33 @@ enrolled %>% count(visits_v2_v3_v4, v4_attend_ind_calc)
 crswlk_export <- data_all %>% select(ID_RSR, ID_enrolled, participant_id, eligible_scr, enrolled)
 saveRDS(object=crswlk_export, file = file.path(path_ontrack_visit_outputs, "utah_crosswalk.rds"))
 write_dta(data=crswlk_export, path = file.path(path_ontrack_visit_outputs, "utah_crosswalk.dta"))
-
+write_csv(crswlk_export, file = file.path(path_ontrack_visit_outputs, "utah_crosswalk.csv"))
 
 data_all <- data_all %>% full_join(enrolled %>% select(ID_RSR, setdiff(names(enrolled),names(data_all))), by = c("ID_RSR"))
 saveRDS(object = data_all, file = file.path(path_ontrack_visit_outputs, "utah_data_all.rds"))
 write_dta(data= data_all, path = file.path(path_ontrack_visit_outputs, "utah_data_all.dta")) # need shorter names
+write_csv(data_all, file = file.path(path_ontrack_visit_outputs, "utah_data_all.csv"))
 
 saveRDS(object = chk, file = file.path(path_ontrack_visit_outputs, "utah_data_checklist_clean.rds"))
 write_dta(data = chk, path =  file.path(path_ontrack_visit_outputs, "utah_data_checklist_clean.dta")) # need shorter names
+write_csv(chk, file =  file.path(path_ontrack_visit_outputs, "utah_data_checklist_clean.csv"))
 
 saveRDS(object = quest, file = file.path(path_ontrack_visit_outputs, "utah_questionnaire.rds"))
 write_dta(data = quest, path = file.path(path_ontrack_visit_outputs, "utah_questionnaire.dta"))
+write_csv(quest, file = file.path(path_ontrack_visit_outputs, "utah_questionnaire.csv"))
 
 saveRDS(object = scr, file = file.path(path_ontrack_visit_outputs, "utah_screener.rds"))
 write_dta(data = scr, path = file.path(path_ontrack_visit_outputs, "utah_screener.dta"))
+write_csv(scr, file = file.path(path_ontrack_visit_outputs, "utah_screener.csv"))
 
 saveRDS(object = event_wide, file = file.path(path_ontrack_visit_outputs, "utah_event_clean_wide.rds"))
 write_dta(data = event_wide, path = file.path(path_ontrack_visit_outputs, "utah_event_clean_wide.dta"))
+write_csv(event_wide, file = file.path(path_ontrack_visit_outputs, "utah_event_clean_wide.rds"))
 
 visit_comments <- data_all %>% filter(enrolled) %>%  select(ID_RSR, ID_enrolled, participant_id, contains(c("comment", "note")))
 saveRDS(object = visit_comments, file = file.path(path_ontrack_visit_outputs, "utah_visit_comments.rds"))
 write_dta(data = visit_comments, path = file.path(path_ontrack_visit_outputs, "utah_visit_comments.dta"))
+write_csv(visit_comments, file = file.path(path_ontrack_visit_outputs, "utah_visit_comments.rds"))
 
 ```
 

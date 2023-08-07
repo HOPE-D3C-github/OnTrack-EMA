@@ -26,6 +26,7 @@ library(kableExtra)
 library(DT)
 library(Hmisc)
 library(haven)
+library(readr)
 
 source("../paths.R")
 
@@ -456,6 +457,17 @@ data_all <- data_all %>%
 
 ```
 
+## Add participant_id_2 for participants with two phones
+```{r}
+data_all <- data_all %>% 
+  mutate(participant_id_2 = case_when(
+    SubjectID == '530079' ~ 'ses_119',
+    SubjectID == "530351" ~ "ses_248",
+    T ~ NA_character_
+  ), .after = participant_id) %>%
+  filter(!(SubjectID == "530351" & participant_id == "ses_248"))
+```
+
 ## Prep outputs
 ```{r}
 data_all <- data_all %>% rename(ID_MDA = SubjectID,
@@ -475,6 +487,13 @@ if(F){dat_master_mda %>% group_by(ID_MDA) %>% summarise(dates_synchronous = v1_d
 saveRDS(data_all_mda,
         file = file.path(path_ontrack_visit_outputs, "data_all_mda.RDS"))
 
+write_csv(data_all_mda,
+          file = file.path(path_ontrack_visit_outputs, "data_all_mda.csv"))
+
 saveRDS(enrolled_mda,
         file = file.path(path_ontrack_visit_outputs, "enrolled_mda.RDS"))
+
+write_csv(enrolled_mda,
+        file = file.path(path_ontrack_visit_outputs, "enrolled_mda.csv"))
+
 ```

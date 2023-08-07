@@ -33,6 +33,33 @@ load(file = file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design
 load(file = file.path(path_ontrack_ema_staged, "combined_online_puffmarker_episode_data.RData"))
 load(file = file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only.RData"))
 
+# Update datasets to use participant_id as the primary key
+cw <- dat_master %>% select(participant_id, ID_enrolled)
+
+all_ema_data_D1_all_delivered <- all_ema_data_D1_all_delivered %>% 
+  arrange(ID_enrolled, study_day_int, block) %>% 
+  left_join(y = cw, by = "ID_enrolled") %>% 
+  relocate(participant_id, .before = ID_enrolled) %>% 
+  select(-ID_enrolled)
+
+all_ema_data_D2_per_study_design <- all_ema_data_D2_per_study_design %>% 
+  arrange(ID_enrolled, study_day_int, block) %>% 
+  left_join(y = cw, by = "ID_enrolled") %>% 
+  relocate(participant_id, .before = ID_enrolled) %>% 
+  select(-ID_enrolled)
+
+all_ema_data_D3_random_only <- all_ema_data_D3_random_only %>% 
+  arrange(ID_enrolled, study_day_int, block) %>% 
+  left_join(y = cw, by = "ID_enrolled") %>% 
+  relocate(participant_id, .before = ID_enrolled) %>% 
+  select(-ID_enrolled)
+
+online_puffmarker_episode_data <- online_puffmarker_episode_data %>% 
+  arrange(ID_enrolled, onlinepuffm_unixts) %>% 
+  left_join(y = cw, by = "ID_enrolled") %>% 
+  relocate(participant_id, .before = ID_enrolled) %>% 
+  select(-ID_enrolled)
+
 # Updating variable names per CFH Variable Naming Conventions 
 updated_var_names <- read_xlsx(path = file.path(path_ontrack_ema_inputs, "OT_Updated_Variable_Names.xlsx")) %>% 
   select(Original_Variable_Names, Updated_Variable_Names) 
@@ -94,13 +121,13 @@ ema_data_all_vars <- tibble(vars = unique(c(names(all_ema_data_D2_per_study_desi
 
 #ema_vars <- tibble(vars = names(all_ema_data_cleaned), datasource = "EMA - All and Random-Only") %>% mutate(id = row_number())
 #ema_vars <- tibble(vars = names(ema_data_curated_drops), datasource = "EMA - All and Random-Only") %>% mutate(id = row_number())
-master_vars <- tibble(vars = names(dat_master %>% relocate(ID_enrolled, v_cc_indicator, timezone_local, .before = everything())), datasource = "Master") %>% mutate(id = row_number())
+master_vars <- tibble(vars = names(dat_master %>% relocate(participant_id, v_cc_indicator, timezone_local, .before = everything())), datasource = "Master") %>% mutate(id = row_number())
 puff_vars <- tibble(vars = names(online_puffmarker_episode_data), datasource = "Puffmarker")%>% mutate(id = row_number())
 #ema_random_only_vars <- tibble(vars = names(all_ema_data_D3_random_only %>% select(contains("aggreg"))),#, patch_all_records, anhedonia_agg_min, anhedonia_agg_max)),
 #                               datasource = "EMA - Random-Only") %>% mutate(id = row_number())
 
 all_vars1 <- bind_rows(master_vars, puff_vars, ema_data_all_vars) %>% 
-  mutate(datasource = if_else(vars %in% c("ID_enrolled","v_cc_indicator", "timezone_local"), "All", datasource))
+  mutate(datasource = if_else(vars %in% c("participant_id","v_cc_indicator", "timezone_local"), "All", datasource))
 
 my_dups <- all_vars1 %>% group_by(vars,datasource) %>% filter(n()>1 & datasource != "All")
 

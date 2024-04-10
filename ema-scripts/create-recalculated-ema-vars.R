@@ -213,34 +213,30 @@ all_ema_data_cleaned <- all_ema_data_cleaned %>% mutate(
                                    cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
                                    T~FALSE),
   chew_snuff_dip_yn = case_when(cc_indicator == 1 & str_detect(string = othertob_which_v1, pattern = "Chew, snuff, or dip") ~ TRUE,
-                                cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                                cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                                T~FALSE),
+                                cc_indicator == 1 & !is.na(othertob_which_v1) ~ FALSE,
+                                T~NA),
   vape_ecig_yn = case_when(cc_indicator == 1 & str_detect(string = othertob_which_v1, pattern = "Vaporizer or e-cigarettes") ~ TRUE,
                            cc_indicator == 2 & str_detect(string = othertob_which_v2, pattern = "Vape pen, JUUL or e-cigarettes") ~ TRUE,
                            cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
                            cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
                            T~FALSE),
   hookah_waterpipe_yn = case_when(cc_indicator == 1 & str_detect(string = othertob_which_v1, pattern = "Hookah or waterpipe") ~ TRUE,
-                                  cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                                  cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                                  T~FALSE),
+                                  cc_indicator == 1 & !is.na(othertob_which_v1) ~ FALSE,
+                                  T~NA),
   tob_pipe_notwaterpipe_yn = case_when(cc_indicator == 1 & str_detect(string = othertob_which_v1, pattern = "Pipe will with tobacco \\(not waterpipe\\)") ~ TRUE, #Pipe will with tobacco (not waterpipe)
-                                       cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                                       cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                                       T~FALSE),
+                                       cc_indicator == 1 & !is.na(othertob_which_v1) ~ FALSE,
+                                       T~NA),
   other_tobacco_yn = case_when(cc_indicator == 1 & str_detect(string = othertob_which_v1, pattern = "Other tobacco product") ~ TRUE,
-                               cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                               cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                               T~FALSE),
+                               cc_indicator == 1 & !is.na(othertob_which_v1) ~ FALSE,
+                               T~NA),
   marijuana_inhaled_yn = case_when(cc_indicator == 2 & str_detect(string = othertob_which_v2, pattern = "Marijuana/Cannabis \\(inhaled/vaped/smoked\\)") ~ TRUE,
-                                   cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                                   cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                                   T~FALSE),
-  marijuana_edible_yn = case_when(cc_indicator == 2 & str_detect(string = othertob_which_v2, pattern = "Marijuana/Cannabis \\(inhaled/vaped/smoked\\)") ~ TRUE,
-                                  cc_indicator == 1 & is.na(othertob_which_v1) ~ NA,
-                                  cc_indicator == 2 & is.na(othertob_which_v2) ~ NA,
-                                  T~FALSE))
+                                   cc_indicator == 2 & !is.na(othertob_which_v2) ~ FALSE,
+                                   T~NA),
+  marijuana_edible_yn = case_when(cc_indicator == 2 & str_detect(string = othertob_which_v2, pattern = "Marijuana/Cannabis \\(edible\\)") ~ TRUE,
+                                  cc_indicator == 2 & !is.na(othertob_which_v2) ~ FALSE,
+                                  T~NA))
+
+all_ema_data_cleaned <- all_ema_data_cleaned %>% select(-othertob_which_v1, -othertob_which_v2) # remove othertob_which vars after breaking out binary vars
 
 # ----------------------------------------------------------------
 # Ontrack updates to match breakfree setup for indicators
@@ -265,9 +261,95 @@ all_ema_data_cleaned <- all_ema_data_cleaned %>% select(-participant_id, -end_of
                                                         -day_end_hrts_local, -day_start_unixts, -day_end_unixts, -day_start_unixts_2, -day_start_hrts_local_2, 
                                                         -day_end_unixts_2, -day_end_hrts_local_2, -lead_day_start_hrts_local, -ema_delivered_hrts_local, 
                                                         -ema_delivered_hrts_local_2, -first_day_date, -last_day_date, -extra_ema_on_block, -no_day_start_on_study_day, -after_pt_withdrew)
+
+# --------------------------------------------------------------------------------------
+# Extract Other Check All that Applies Variables into Binary Vars for Each Choice ----
+# --------------------------------------------------------------------------------------
+if(F){ View(ema_items_labelled)}
+
+vars_mult_select <- ema_items_labelled %>% filter(question_type == "multiple_select") %>% 
+  filter(!varname_breakfree %in% c("othertob_which_v1", "othertob_which_v2")) %>% 
+  select(varname_breakfree, question_type, question_text, question_options)
+
+vars_mult_select_v2 <- vars_mult_select %>% mutate(listed_response_options = str_extract_all(question_options, "\\{.+?\\}"))
+
+
+df_mult_select_responses_cw <- data.frame(Variables = character(), question_type = character(), response_values = character())
+
+for (i in 1:nrow(vars_mult_select_v2)){
+  (responses_n_pre <- vars_mult_select_v2$listed_response_options[i])
+  (responses_n_post <- str_remove_all(unlist(responses_n_pre), "\\{|\\}"))
+  df_mult_select_responses_cw <- df_mult_select_responses_cw %>% 
+    add_row(data.frame(Variables = vars_mult_select_v2$varname_breakfree[i], 
+                       question_type = vars_mult_select_v2$question_type[i],
+                       response_values = responses_n_post))
+  if(i == nrow(vars_mult_select_v2)){
+    # Remove all non-affirmative responses "<UNSELECT_OTHER>"
+    df_mult_select_responses_cw <- df_mult_select_responses_cw %>%
+      filter(!str_detect(response_values, "<UNSELECT_OTHER>")) %>% 
+      mutate(response_values_formatted = str_remove_all(response_values, "\\(|\\)")) %>% 
+      mutate(option_number = row_number(), .by = Variables) %>% 
+      mutate(new_var_name = case_when(
+        Variables == "alcohol" ~ paste(Variables, str_to_lower(response_values), "yn", sep = "_"),
+        T ~ paste0(Variables, "_opt", option_number, "_yn")
+      ))
+  }
+}
+
+# Use df_mult_select_responses_cw to iterate across variable-responses and create a binary variable for each
+all_ema_data_cleaned_v2 <- all_ema_data_cleaned # initialize new version of the data to work on
+for (i in 1:length(unique(df_mult_select_responses_cw$Variables))){
+  (var_i <- unique(df_mult_select_responses_cw$Variables)[i])
+  (colnum_i <- which(colnames(all_ema_data_cleaned_v2) == var_i))
+  df_var_i <- all_ema_data_cleaned_v2[,colnum_i]
+  (responses_var_i <- df_mult_select_responses_cw %>% filter(Variables == var_i))
+  # create a copy of the original values, but formatted without any parentheses
+  df_var_i[,2] <- df_var_i[,1]
+  colnames(df_var_i)[2] <- "var_i_formatted"
+  df_var_i <- df_var_i %>% mutate(var_i_formatted = str_remove_all(var_i_formatted, "\\(|\\)"))
+  
+  for (j in 1: nrow(responses_var_i)){
+    (response_value_formatted_j <- responses_var_i$response_values_formatted[j])
+    df_var_i  <- df_var_i %>% mutate(tempname = str_detect(var_i_formatted, response_value_formatted_j))
+    (new_var_name_j <-  responses_var_i$new_var_name[j])
+    
+    colnames(df_var_i)[j+2] <- new_var_name_j
+    
+    # # edit here
+    # if(var_i == "alcohol"){
+    #   colnames(df_var_i)[j+2] <- paste(var_i, str_to_lower(response_value_formatted_j), "yn", sep = "_")
+    # } else {
+    #   colnames(df_var_i)[j+2] <- paste(var_i,j, sep = "_opt")  
+    # }
+  }
+  all_ema_data_cleaned_v2 <- bind_cols(
+    all_ema_data_cleaned_v2[1:colnum_i - 1],
+    df_var_i[3:ncol(df_var_i)],
+    all_ema_data_cleaned_v2[(colnum_i + 1): ncol(all_ema_data_cleaned_v2)]
+  )
+}
+
+# add QC
+test_ncols <- test_that("check that the number of columns are as expected", {
+  expect_equal(
+    object = ncol(all_ema_data_cleaned_v2),
+    expected = ncol(all_ema_data_cleaned) + nrow(df_mult_select_responses_cw) - length(unique(df_mult_select_responses_cw$Variables))
+  )
+})
+
+test_nrows <- test_that("check that the number of rows did not change", {
+  expect_equal(object = nrow(all_ema_data_cleaned_v2),
+               expected = nrow(all_ema_data_cleaned))
+})
+
+if(test_ncols & test_nrows){print("tests passed, saving datasets to staged folder")
+  all_ema_data_cleaned_final <- all_ema_data_cleaned_v2} else{print("1+ tests failed"); stop()}
+
+
 # ----------------------------------------------------------------
 # Reposition columns
-all_ema_data_D1_all_delivered <- all_ema_data_cleaned %>% 
+# ----------------------------------------------------------------
+all_ema_data_D1_all_delivered <- all_ema_data_cleaned_v2 %>% 
   relocate(ema_delivered, begin_hrts_UTC, end_hrts_UTC, day_start_hrts_local,
            block_start_hrts_local, block_end_hrts_local, extra_ema,
            extra_ema_on_study_day, multi_day_start, multi_day_start_on_study_day,

@@ -260,6 +260,21 @@ create_codebook <- list(
     )
 )
 
+create_datasets_with_integers <- list(
+  file.name = "ema-scripts/create-ema-datasets-with-integers.R",
+  domain = "EMA",
+  inputs = c(
+    file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_final.RData"),
+    file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_final.RData"),
+    file = file.path(path_ontrack_ema_staged, "codebook.RData")
+    ),
+  outputs = c(
+    file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_integers.RData"),
+    file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_integers.RData"),
+    file.path(path_ontrack_ema_staged, "create_and_apply_value_labels_SAS_script.RData")
+    )
+)
+
 output_formatted_ema_data <- list(
   file.name = "other-scripts/output-formatted-database.R",
   domain = "EMA",
@@ -269,6 +284,8 @@ output_formatted_ema_data <- list(
     file.path(path_ontrack_ema_staged, "all_ema_data_D1_all_delivered_final.RData"),
     file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_final.RData"),
     file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_final.RData"),
+    file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_integers.RData"),
+    file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_integers.RData"),
     file.path(path_ontrack_ema_staged, "combined_online_puffmarker_episode_data_final.RData"),
     file.path(path_ontrack_ema_staged, "codebook.RData")
   ),
@@ -283,9 +300,15 @@ output_formatted_ema_data <- list(
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.rds"),
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.dta"),
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.csv"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.rds"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.dta"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.csv"),
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.rds"),
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.dta"),
     file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.csv"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.rds"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.dta"),
+    file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.csv"),
     file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.rds"),
     file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.dta"),
     file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.csv"),
@@ -305,7 +328,7 @@ df_dependencies <- as.data.frame(rbind(read_ema_cc1, parse_ema_quest_cc1, gen_em
                                        biomarker_read_raw_cc1, biomarker_gen_dat_cc1,
                                        biomarker_read_raw_cc2, biomarker_gen_dat_cc2,
                                        combine_cc1_cc2, create_recalc_ema_vars, create_ema_per_study_design,
-                                       create_random_only_ema, create_codebook, output_formatted_ema_data))
+                                       create_random_only_ema, create_codebook, create_datasets_with_integers, output_formatted_ema_data))
 
 
 remove(list = setdiff(ls(), c("df_dependencies", vars_pre)))

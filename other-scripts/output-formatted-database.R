@@ -7,8 +7,10 @@
 #             file.path(path_ontrack_ema_staged, "combined_ema_data_final.RData")
 #             file.path(path_ontrack_ema_staged, "all_ema_data_D1_all_delivered_final.RData")
 #             file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_final.RData")
+#             file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_integers.RData")
 #             file.path(path_ontrack_ema_staged, "combined_online_puffmarker_episode_data_final.RData")
 #             file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_final.RData") 
+#             file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_integers.Rdata")
 #     
 # Outputs:    file.path(path_ontrack_ema_output_4_analysis, "masterlist.rds")
 #             file.path(path_ontrack_ema_output_4_analysis, "masterlist.dta")
@@ -19,10 +21,16 @@
 #             file.path(path_ontrack_ema_output_dm, "all_ema_data-1-all_delivered.csv")
 #             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.rds")
 #             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.dta")
-#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.csv")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.csv") 
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.rds")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.dta")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.csv") 
 #             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.rds")
 #             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.dta")
-#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.csv")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.csv") 
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.rds")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.dta")
+#             file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.csv")
 #             file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.rds")
 #             file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.dta")
 #             file.path(path_ontrack_ema_output_4_analysis, "online_puffmarker_episode_data.csv")
@@ -63,13 +71,13 @@ write.csv(ema_items_labelled, file.path(path_ontrack_ema_output_dm, "ema_items_a
 # -----------------------------------------------------------------------------
 # EMA skip logic issues - output 4 data managers only
 # -----------------------------------------------------------------------------
-# load(file = file.path(path_breakfree_staged_data, "combined_ema_data_clean.RData"))
-# write.csv(conditions_applied_simple, file.path(path_breakfree_output_data_4dm, "skip_logic_errors_summary.csv"), row.names = FALSE, na = "")
+# load(file = file.path(path_ontrack_ema_staged, "combined_ema_data_clean.RData"))
+# write.csv(conditions_applied_simple, file.path(path_ontrack_ema_output_4_analysis_4dm, "skip_logic_errors_summary.csv"), row.names = FALSE, na = "")
 # 
 # # [Begin] Tony's addition
-# write.csv(unedited_and_clean_ema_vars_dat, file.path(path_breakfree_output_data_4dm, "unedited_and_clean_ema_vars.csv"), row.names = FALSE, na = "")
-# saveRDS(object = unedited_and_clean_ema_vars_dat, file = file.path(path_breakfree_output_data_4dm, "unedited_and_clean_ema_vars.rds"))  # R/python users
-# write_dta(data = unedited_and_clean_ema_vars_dat, path = file.path(path_breakfree_output_data_4dm, "unedited_and_clean_ema_vars.dta"))  # Stata/SAS users
+# write.csv(unedited_and_clean_ema_vars_dat, file.path(path_ontrack_ema_output_4_analysis_4dm, "unedited_and_clean_ema_vars.csv"), row.names = FALSE, na = "")
+# saveRDS(object = unedited_and_clean_ema_vars_dat, file = file.path(path_ontrack_ema_output_4_analysis_4dm, "unedited_and_clean_ema_vars.rds"))  # R/python users
+# write_dta(data = unedited_and_clean_ema_vars_dat, path = file.path(path_ontrack_ema_output_4_analysis_4dm, "unedited_and_clean_ema_vars.dta"))  # Stata/SAS users
 # # [End] Tony's addition
 
 # -----------------------------------------------------------------------------
@@ -102,6 +110,17 @@ all_ema_data_D2_per_study_design %>%
   mutate(across(contains("hrts"), ~format(., format = "%Y-%m-%d %H:%M:%S"))) %>%
   write.csv(x = ., file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design.csv"), row.names = FALSE, na = "")
 
+### Integer values version
+load(file = file.path(path_ontrack_ema_staged, "all_ema_data_D2_per_study_design_integers.RData"))
+
+saveRDS(object = all_ema_data_D2_per_study_design_integers, file = file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.rds"))  # R/python users
+write_dta(data = all_ema_data_D2_per_study_design_integers, path = file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.dta"))  # Stata/SAS users
+
+# General users
+all_ema_data_D2_per_study_design_integers %>%
+  mutate(across(contains("hrts"), ~format(., format = "%Y-%m-%d %H:%M:%S"))) %>%
+  write.csv(x = ., file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-2-per_study_design_integers.csv"), row.names = FALSE, na = "")
+
 # -----------------------------------------------------------------------------
 # EMA Dataset #3 - Random Only EMA
 #
@@ -115,6 +134,16 @@ write_dta(data = all_ema_data_D3_random_only, path = file.path(path_ontrack_ema_
 all_ema_data_D3_random_only %>% 
   mutate(across(contains("hrts"), ~format(., format = "%Y-%m-%d %H:%M:%S"))) %>%
   write.csv(x = ., file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema.csv"), row.names = FALSE, na = "")
+
+### Integer values version
+load(file = file.path(path_ontrack_ema_staged, "all_ema_data_D3_random_only_integers.Rdata"))
+
+saveRDS(object = all_ema_data_D3_random_only_integers, file = file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.rds"))  # R/python users
+write_dta(data = all_ema_data_D3_random_only_integers, path = file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.dta"))  # Stata/SAS users
+
+all_ema_data_D3_random_only_integers %>% 
+  mutate(across(contains("hrts"), ~format(., format = "%Y-%m-%d %H:%M:%S"))) %>%
+  write.csv(x = ., file.path(path_ontrack_ema_output_4_analysis, "all_ema_data-3-random_only_ema_integers.csv"), row.names = FALSE, na = "")
 
 # -----------------------------------------------------------------------------
 # For CC1 & CC2:
@@ -143,7 +172,7 @@ codebook %>% rename_all(~str_replace_all(.," ","_")) %>% write_dta(data = ., pat
 # General users
 # codebook %>%
 #   mutate(across(contains("hrts"), ~format(., format = "%Y-%m-%d %H:%M:%S"))) %>%
-#   write.csv(x = ., file.path(path_breakfree_output_data, "codebook.csv"), row.names = FALSE, na = "") 
+#   write.csv(x = ., file.path(path_ontrack_ema_output_4_analysis, "codebook.csv"), row.names = FALSE, na = "") 
 
 wb <- createWorkbook()
 addWorksheet(wb, "Codebook")

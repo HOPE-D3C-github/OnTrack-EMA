@@ -226,7 +226,6 @@ if(test1 & test2){
   if (!test2){print(paste("ERROR: missing variable label:", all_vars5 %>% filter(is.na(varlab)) %>% .$vars))}
 }
 
-
 save(codebook,
      file = file.path(path_ontrack_ema_staged, "codebook.RData"))
 

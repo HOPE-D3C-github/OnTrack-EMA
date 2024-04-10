@@ -3,7 +3,7 @@ library(stringr)
 
 development <- FALSE
 
-pre_box <- getwd() %>% str_remove("OneDrive.+")
+pre_box <- getwd() %>% str_remove("OneDrive.+|Box.+|Documents.+")
 
 # Inputs from various folders
 path_ontrack_mda_raw <- paste0(pre_box, "Box/OnTrack Data - MD Anderson - Raw/OnTrack_MDA_Tables_2022-09-02")
@@ -12,7 +12,7 @@ path_ontrack_cc2_input_data <- paste0(pre_box, "Box/MD2K Utah/EMAs")
 
 # Inputs folder
 path_ontrack_visit_inputs <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/Visit Outcomes Data/Inputs")
-path_ontrack_ema_inputs <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/inputs")
+path_ontrack_ema_inputs <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/inputs/v1.2")
 path_ontrack_quest_inputs <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/Questionnaire Data/inputs")
 
 # Staged folder
@@ -25,8 +25,8 @@ if(development){
   path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/outputs - data managers only (temp location)")
   path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/EMA Data/outputs - data for analysis (temp location)")
 } else {
-  path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Curated Data - available upon request/EMA/Release v1.1/output - 4 data managers")
-  path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Curated Data/EMA/Release v1.1/data for analysis")
+  path_ontrack_ema_output_dm <- paste0(pre_box, "Box/OnTrack Curated Data - available upon request/EMA/Release v1.2/output - 4 data managers")
+  path_ontrack_ema_output_4_analysis <- paste0(pre_box, "Box/OnTrack Curated Data/EMA/Release v1.2/data for analysis")
 }
 
 path_ontrack_quest_output_4_analysis <- paste0(pre_box, "Box/OnTrack Pre-Curated Data/Questionnaire Data/outputs - data managers only (temp location)")
